@@ -1,0 +1,41 @@
+# Dev/staging media plane. Host networking is deliberate: SFU media needs direct UDP, no NAT/HTTP LB.
+services:
+  redis:
+    image: redis:7
+    network_mode: host
+    command: ["redis-server", "--bind", "127.0.0.1", "--appendonly", "yes"]
+  livekit:
+    image: livekit/livekit-server:latest   # PIN an exact version before staging
+    network_mode: host
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes: ["./livekit.yaml:/etc/livekit.yaml:ro"]
+    depends_on: [redis]
+  egress:
+    image: livekit/egress:latest           # PIN an exact version before staging
+    network_mode: host
+    cap_add: [SYS_ADMIN]
+    environment:
+      EGRESS_CONFIG_BODY: |
+        log_level: info
+        api_key: devkey
+        api_secret: change-me-to-a-32+char-secret-value-0000
+        ws_url: ws://localhost:7880
+        redis:
+          address: localhost:6379
+    depends_on: [redis, livekit]
+  postgres:
+    image: postgres:16
+    network_mode: host
+    environment: { POSTGRES_DB: stm, POSTGRES_USER: stm, POSTGRES_PASSWORD: change-me }
+  minio:
+    image: minio/minio
+    network_mode: host
+    command: ["server", "/data"]
+  minio-init:   # DEV ONLY: GOVERNANCE 1d. Production: your WORM store, COMPLIANCE mode, retention per regulator.
+    image: minio/mc
+    network_mode: host
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "until mc alias set local http://localhost:9000 minioadmin minioadmin; do sleep 1; done;
+      mc mb --with-lock --ignore-existing local/stm-recordings;
+      mc retention set --default GOVERNANCE 1d local/stm-recordings; exit 0;"

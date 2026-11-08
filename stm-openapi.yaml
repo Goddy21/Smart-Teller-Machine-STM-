@@ -1,0 +1,1678 @@
+openapi: 3.0.1
+info:
+  title: OpenAPI definition
+  version: v0
+servers:
+- url: http://localhost:8080
+  description: Generated server url
+paths:
+  /api/v1/kiosk/sessions/{id}/product:
+    put:
+      tags:
+      - session-controller
+      operationId: selectProduct
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/terminals/register:
+    post:
+      tags:
+      - terminal-controller
+      operationId: register
+      parameters:
+      - name: X-Provisioning-Secret
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Registration"
+  /api/v1/portal/terminals/{terminalCode}/commands:
+    post:
+      tags:
+      - command-controller
+      operationId: send
+      parameters:
+      - name: terminalCode
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommandRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+  /api/v1/portal/signaling/ticket:
+    post:
+      tags:
+      - ws-ticket-controller
+      operationId: teller
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TellerTicketRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Ticket"
+  /api/v1/portal/sessions/{id}/decision:
+    post:
+      tags:
+      - portal-session-controller
+      operationId: decide
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecisionRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PortalSessionView"
+  /api/v1/kiosk/transactions:
+    post:
+      tags:
+      - transaction-controller
+      operationId: create
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TxView"
+  /api/v1/kiosk/transactions/{id}/escrow:
+    post:
+      tags:
+      - transaction-controller
+      operationId: escrow
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EscrowRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TxView"
+  /api/v1/kiosk/transactions/{id}/commit:
+    post:
+      tags:
+      - transaction-controller
+      operationId: commit
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TxView"
+  /api/v1/kiosk/transactions/{id}/cancel:
+    post:
+      tags:
+      - transaction-controller
+      operationId: cancel
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TxView"
+  /api/v1/kiosk/telemetry:
+    post:
+      tags:
+      - telemetry-controller
+      operationId: heartbeat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Heartbeat"
+        required: true
+      responses:
+        "200":
+          description: OK
+  /api/v1/kiosk/signaling/ticket:
+    post:
+      tags:
+      - ws-ticket-controller
+      operationId: kiosk
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Ticket"
+  /api/v1/kiosk/sessions:
+    post:
+      tags:
+      - session-controller
+      operationId: create_1
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/supporting-documents/skip:
+    post:
+      tags:
+      - session-controller
+      operationId: skipDocs
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/supporting-documents/accept:
+    post:
+      tags:
+      - session-controller
+      operationId: acceptDocs
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/summary:
+    post:
+      tags:
+      - session-controller
+      operationId: summary
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SummaryRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+  /api/v1/kiosk/sessions/{id}/product/continue:
+    post:
+      tags:
+      - session-controller
+      operationId: continueToAgreement
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/passport:
+    post:
+      tags:
+      - session-controller
+      operationId: passport
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PassportRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PassportResult"
+  /api/v1/kiosk/sessions/{id}/keepalive:
+    post:
+      tags:
+      - session-controller
+      operationId: keepAlive
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/hardware-fault:
+    post:
+      tags:
+      - session-controller
+      operationId: hardwareFault
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HardwareFaultRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/FaultResponse"
+  /api/v1/kiosk/sessions/{id}/escalate:
+    post:
+      tags:
+      - session-controller
+      operationId: escalate
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EscalateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/documents:
+    post:
+      tags:
+      - session-controller
+      operationId: upload
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: type
+        in: query
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              required:
+              - file
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/DocumentAccepted"
+  /api/v1/kiosk/sessions/{id}/details:
+    post:
+      tags:
+      - session-controller
+      operationId: details
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DetailsRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/complete:
+    post:
+      tags:
+      - session-controller
+      operationId: complete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/card/offer:
+    post:
+      tags:
+      - session-controller
+      operationId: cardOffer
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardOfferRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/card/issue:
+    post:
+      tags:
+      - session-controller
+      operationId: issueCard
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CardIssueRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/CardIssuanceResponse"
+  /api/v1/kiosk/sessions/{id}/card/dispense-result:
+    post:
+      tags:
+      - session-controller
+      operationId: dispenseResult
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispenseResultRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/cancel:
+    post:
+      tags:
+      - session-controller
+      operationId: cancel_1
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/biometrics/fingerprint:
+    post:
+      tags:
+      - session-controller
+      operationId: fingerprint
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FingerprintRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/BiometricResponse"
+  /api/v1/kiosk/sessions/{id}/biometrics/face:
+    post:
+      tags:
+      - session-controller
+      operationId: face
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FaceRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/BiometricResponse"
+  /api/v1/kiosk/sessions/{id}/back:
+    post:
+      tags:
+      - session-controller
+      operationId: back
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/agreement/sign:
+    post:
+      tags:
+      - session-controller
+      operationId: sign
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/account:
+    post:
+      tags:
+      - session-controller
+      operationId: openAccount
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/account/lookup:
+    post:
+      tags:
+      - session-controller
+      operationId: lookup
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LookupRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/LookupResult"
+  /api/v1/portal/transactions:
+    get:
+      tags:
+      - portal-transaction-controller
+      operationId: byState
+      parameters:
+      - name: state
+        in: query
+        required: true
+        schema:
+          type: string
+          enum:
+          - INITIATED
+          - CASH_ESCROWED
+          - CREDIT_PENDING
+          - UNKNOWN_OUTCOME
+          - COMPENSATING
+          - COMMITTED
+          - ROLLED_BACK
+          - CANCELLED
+          - FAILED
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TxView"
+  /api/v1/portal/terminals:
+    get:
+      tags:
+      - telemetry-controller
+      operationId: terminals
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TerminalView"
+  /api/v1/portal/telemetry/stream:
+    get:
+      tags:
+      - telemetry-controller
+      operationId: stream
+      responses:
+        "200":
+          description: OK
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseEmitter"
+  /api/v1/portal/sessions:
+    get:
+      tags:
+      - portal-session-controller
+      operationId: list
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: escalated
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PortalSessionView"
+  /api/v1/portal/sessions/{id}:
+    get:
+      tags:
+      - portal-session-controller
+      operationId: get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PortalSessionView"
+  /api/v1/portal/sessions/{id}/documents/{docId}:
+    get:
+      tags:
+      - portal-session-controller
+      operationId: document
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: docId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: viewer
+        in: query
+        required: false
+        schema:
+          type: string
+          default: portal
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: byte
+  /api/v1/portal/card-fulfilments:
+    get:
+      tags:
+      - portal-session-controller
+      operationId: fulfilments
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          default: PENDING_COLLECTION
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Fulfilment"
+  /api/v1/portal/audit/verify:
+    get:
+      tags:
+      - audit-controller
+      operationId: verify
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/VerifyResult"
+  /api/v1/kiosk/transactions/{id}:
+    get:
+      tags:
+      - transaction-controller
+      operationId: get_1
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/TxView"
+  /api/v1/kiosk/status:
+    get:
+      tags:
+      - session-controller
+      operationId: machineStatus
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Status"
+  /api/v1/kiosk/sessions/{id}:
+    get:
+      tags:
+      - session-controller
+      operationId: get_2
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionView"
+  /api/v1/kiosk/sessions/{id}/receipt:
+    get:
+      tags:
+      - session-controller
+      operationId: receipt
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Receipt"
+  /api/v1/kiosk/sessions/{id}/card/name-options:
+    get:
+      tags:
+      - session-controller
+      operationId: nameOptions
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  type: string
+  /api/v1/kiosk/sessions/{id}/agreement:
+    get:
+      tags:
+      - session-controller
+      operationId: agreement
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: string
+  /api/v1/kiosk/products:
+    get:
+      tags:
+      - session-controller
+      operationId: products
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+  /api/v1/kiosk/demo/personas:
+    get:
+      tags:
+      - demo-controller
+      operationId: personas
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+components:
+  schemas:
+    ProductRequest:
+      required:
+      - productCode
+      type: object
+      properties:
+        productCode:
+          type: string
+    AccountView:
+      type: object
+      properties:
+        accountNo:
+          type: string
+        branch:
+          type: string
+        productCode:
+          type: string
+        currency:
+          type: string
+    CardView:
+      type: object
+      properties:
+        status:
+          type: string
+        maskedPan:
+          type: string
+        embossedName:
+          type: string
+    SessionView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        journey:
+          type: string
+        status:
+          type: string
+        step:
+          type: string
+        stepNumber:
+          type: integer
+          format: int32
+        totalSteps:
+          type: integer
+          format: int32
+        language:
+          type: string
+        identityVerified:
+          type: boolean
+        faceStatus:
+          type: string
+        faceAttemptsRemaining:
+          type: integer
+          format: int32
+        fingerStatus:
+          type: string
+        fingerAttemptsRemaining:
+          type: integer
+          format: int32
+        reviewPending:
+          type: boolean
+        escalated:
+          type: boolean
+        tier:
+          type: string
+        productCode:
+          type: string
+        account:
+          $ref: "#/components/schemas/AccountView"
+        card:
+          $ref: "#/components/schemas/CardView"
+        errorRef:
+          type: string
+    RegisterRequest:
+      required:
+      - branchCode
+      - terminalCode
+      type: object
+      properties:
+        terminalCode:
+          maxLength: 50
+          minLength: 0
+          type: string
+        branchCode:
+          maxLength: 20
+          minLength: 0
+          type: string
+    Registration:
+      type: object
+      properties:
+        terminalCode:
+          type: string
+        token:
+          type: string
+    CommandRequest:
+      required:
+      - command
+      type: object
+      properties:
+        command:
+          type: string
+          enum:
+          - REBOOT
+          - LOCK
+          - UNLOCK
+          - REFRESH_CONFIG
+    TellerTicketRequest:
+      required:
+      - tellerId
+      type: object
+      properties:
+        tellerId:
+          maxLength: 50
+          minLength: 0
+          pattern: "[A-Za-z0-9._@-]+"
+          type: string
+    Ticket:
+      type: object
+      properties:
+        ticket:
+          type: string
+        expiresInSeconds:
+          type: integer
+          format: int32
+    DecisionRequest:
+      required:
+      - decision
+      - tellerId
+      type: object
+      properties:
+        decision:
+          type: string
+        tellerId:
+          maxLength: 50
+          minLength: 0
+          type: string
+        notes:
+          maxLength: 200
+          minLength: 0
+          type: string
+    DocMeta:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        mimeType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int32
+        sha256:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    PortalSessionView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        terminalCode:
+          type: string
+        journey:
+          type: string
+        status:
+          type: string
+        step:
+          type: string
+        escalated:
+          type: boolean
+        escalationReason:
+          type: string
+        identityStatus:
+          type: string
+        faceStatus:
+          type: string
+        faceAttempts:
+          type: integer
+          format: int32
+        fingerStatus:
+          type: string
+        fingerAttempts:
+          type: integer
+          format: int32
+        reviewRequired:
+          type: boolean
+        reviewStatus:
+          type: string
+        customerName:
+          type: string
+        dateOfBirth:
+          type: string
+          format: date
+        documentNumberMasked:
+          type: string
+        nationality:
+          type: string
+        tier:
+          type: string
+        productCode:
+          type: string
+        accountNo:
+          type: string
+        cardStatus:
+          type: string
+        errorRef:
+          type: string
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/DocMeta"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateRequest:
+      required:
+      - accountNo
+      - currency
+      - customerId
+      type: object
+      properties:
+        customerId:
+          type: string
+        accountNo:
+          type: string
+        currency:
+          pattern: "[A-Z]{3}"
+          type: string
+    TxView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        state:
+          type: string
+        customerId:
+          type: string
+        accountNo:
+          type: string
+        currency:
+          type: string
+        amount:
+          type: number
+        bankReference:
+          type: string
+        failureReason:
+          type: string
+        cashReturnRequired:
+          type: boolean
+    EscrowRequest:
+      required:
+      - amount
+      type: object
+      properties:
+        amount:
+          minimum: 0.01
+          exclusiveMinimum: false
+          type: number
+    Heartbeat:
+      required:
+      - status
+      type: object
+      properties:
+        status:
+          type: string
+        cassetteCounts:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int32
+        cardStock:
+          type: integer
+          format: int32
+        alarms:
+          type: array
+          items:
+            type: string
+    CreateSessionRequest:
+      required:
+      - journey
+      type: object
+      properties:
+        journey:
+          type: string
+          enum:
+          - OPEN_ACCOUNT
+          - DEBIT_CARD
+        language:
+          type: string
+    SummaryRequest:
+      required:
+      - channel
+      type: object
+      properties:
+        channel:
+          type: string
+          enum:
+          - EMAIL
+          - SMS
+    PassportRequest:
+      required:
+      - mrzLine1
+      - mrzLine2
+      type: object
+      properties:
+        mrzLine1:
+          type: string
+        mrzLine2:
+          type: string
+    PassportResult:
+      type: object
+      properties:
+        documentNumber:
+          type: string
+        surname:
+          type: string
+        givenNames:
+          type: string
+        fullName:
+          type: string
+        dateOfBirth:
+          type: string
+          format: date
+        nationalityCode:
+          type: string
+        sex:
+          type: string
+        expiryDate:
+          type: string
+          format: date
+        nextStep:
+          type: string
+        accountMasked:
+          type: string
+    HardwareFaultRequest:
+      required:
+      - device
+      type: object
+      properties:
+        device:
+          type: string
+        errorCode:
+          type: string
+    FaultResponse:
+      type: object
+      properties:
+        errorRef:
+          type: string
+        accountNo:
+          type: string
+        branchName:
+          type: string
+        helpline:
+          type: string
+    EscalateRequest:
+      type: object
+      properties:
+        reason:
+          maxLength: 200
+          minLength: 0
+          type: string
+    DocumentAccepted:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        sha256:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int32
+    DetailsRequest:
+      required:
+      - mobile
+      type: object
+      properties:
+        mobile:
+          type: string
+        email:
+          type: string
+        consentAccepted:
+          type: boolean
+    CardOfferRequest:
+      type: object
+      properties:
+        issueNow:
+          type: boolean
+    CardIssueRequest:
+      required:
+      - embossedName
+      - encryptedPinBlock
+      type: object
+      properties:
+        embossedName:
+          type: string
+        encryptedPinBlock:
+          type: string
+        pinKeyId:
+          type: string
+    CardIssuanceResponse:
+      type: object
+      properties:
+        cardRef:
+          type: string
+        maskedPan:
+          type: string
+        expiry:
+          type: string
+        personalisationPayload:
+          type: string
+    DispenseResultRequest:
+      type: object
+      properties:
+        success:
+          type: boolean
+        errorCode:
+          type: string
+    FingerprintRequest:
+      required:
+      - templateBase64
+      type: object
+      properties:
+        templateBase64:
+          maxLength: 200000
+          minLength: 0
+          type: string
+        finger:
+          type: string
+    BiometricResponse:
+      type: object
+      properties:
+        modality:
+          type: string
+        matched:
+          type: boolean
+        attempt:
+          type: integer
+          format: int32
+        attemptsRemaining:
+          type: integer
+          format: int32
+        referToTeller:
+          type: boolean
+        identityVerified:
+          type: boolean
+        nextStep:
+          type: string
+    FaceRequest:
+      required:
+      - imageBase64
+      type: object
+      properties:
+        imageBase64:
+          maxLength: 3000000
+          minLength: 0
+          type: string
+        livenessPassed:
+          type: boolean
+    SignRequest:
+      required:
+      - agreementVersion
+      - method
+      type: object
+      properties:
+        method:
+          type: string
+          enum:
+          - DIGITAL
+          - PAPER
+        signaturePngBase64:
+          maxLength: 400000
+          minLength: 0
+          type: string
+        accepted:
+          type: boolean
+        agreementVersion:
+          type: string
+    LookupRequest:
+      required:
+      - method
+      - value
+      type: object
+      properties:
+        method:
+          type: string
+          enum:
+          - ACCOUNT_NUMBER
+          - ID_NUMBER
+          - PASSPORT_NUMBER
+          - CARD_TOKEN
+        value:
+          maxLength: 64
+          minLength: 0
+          type: string
+    LookupResult:
+      type: object
+      properties:
+        accountMasked:
+          type: string
+        nextStep:
+          type: string
+    TerminalView:
+      type: object
+      properties:
+        terminalCode:
+          type: string
+        branchCode:
+          type: string
+        status:
+          type: string
+        cassetteCounts:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int32
+        cardStock:
+          type: integer
+          format: int32
+        alarms:
+          type: array
+          items:
+            type: string
+        lastSeen:
+          type: string
+          format: date-time
+        online:
+          type: boolean
+    SseEmitter:
+      type: object
+      properties:
+        timeout:
+          type: integer
+          format: int64
+    Fulfilment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sessionId:
+          type: string
+          format: uuid
+        cardRef:
+          type: string
+        accountNo:
+          type: string
+        branchCode:
+          type: string
+        errorRef:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    VerifyResult:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        checked:
+          type: integer
+          format: int64
+        brokenAtSeq:
+          type: integer
+          format: int64
+    Status:
+      type: object
+      properties:
+        inService:
+          type: boolean
+        accountOpeningAvailable:
+          type: boolean
+        cardIssuanceAvailable:
+          type: boolean
+        reason:
+          type: string
+        branchName:
+          type: string
+        helpline:
+          type: string
+    Line:
+      type: object
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+    Receipt:
+      type: object
+      properties:
+        language:
+          type: string
+        title:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/Line"
+        footer:
+          type: string
+    Product:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        currency:
+          type: string
+        interestRate:
+          type: number
+        minOpeningBalance:
+          type: number
+        monthlyFee:
+          type: number
+        overdraft:
+          type: boolean

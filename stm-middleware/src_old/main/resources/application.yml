@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: stm-middleware
+  profiles:
+    default: demo
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/stm}
+    username: ${DB_USER:stm}
+    password: ${DB_PASSWORD:stm}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  servlet:
+    multipart:
+      max-file-size: 6MB
+      max-request-size: 8MB
+
+stm:
+  provisioning-secret: ${PROVISIONING_SECRET:dev-provisioning-secret}
+  portal-api-key: ${PORTAL_API_KEY:dev-portal-key}
+  require-client-cert: false
+  low-card-stock: 50
+  # Browser origins allowed to call the API / open the signaling WebSocket (comma-separated in the env var).
+  # Dev default covers the Vite dev server. Same-origin pages never need to be listed.
+  cors-allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173}
+  ws-ticket-ttl-seconds: 30         # one-time WebSocket ticket lifetime
+  allow-teller-key-in-query: true   # legacy ?key= teller sign-in on the WebSocket; disabled in prod
+  helpline: ${HELPLINE:}
+  portal-auth:                      # STM portal sign-in (accounts live in portal_users)
+    idle-minutes: 30                # signed out after 30 min without activity
+    absolute-hours: 10              # and after 10 h in any case
+    max-failed-attempts: 5          # wrong passwords in a row before the account locks
+    lock-minutes: 15
+    allow-shared-key: true          # DEV: scripts may still use X-Portal-Key (demo-journey.ps1). False in prod.
+    bootstrap-admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}   # blank = random, printed once in the log            # shown on the out-of-service screen, receipts and vouchers
+  session:
+    idle-seconds: 600               # server-side safety net; the kiosk has its own 20 s countdown
+    abandoned-retention-hours: 24   # PII/documents of sessions that never opened an account are purged after this
+  reconcile:
+    interval-ms: 30000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

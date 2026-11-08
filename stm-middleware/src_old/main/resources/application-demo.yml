@@ -1,0 +1,4 @@
+# Demo profile: in-memory mock bank (personas, fixed OTP 123456). No bank connectivity needed.
+stm:
+  mock:
+    latency-ms: 150   # simulate bank latency; set 0 for fastest tests

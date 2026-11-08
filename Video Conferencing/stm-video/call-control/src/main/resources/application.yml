@@ -1,0 +1,29 @@
+server.port: 8080
+spring:
+  data.redis:
+    host: ${REDIS_HOST:localhost}   # production: Sentinel (spring.data.redis.sentinel.*) or Cluster
+    port: ${REDIS_PORT:6379}
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/stm}
+    username: stm
+    password: ${DB_PASSWORD:change-me}
+  jackson.serialization.write-dates-as-timestamps: false
+livekit:
+  api-key: devkey
+  api-secret: change-me-to-a-32+char-secret-value-0000
+  public-url: ${LIVEKIT_PUBLIC_URL:ws://localhost:7880}   # what browsers connect to. LAN test: ws://<laptop-LAN-IP>:7880. Production: wss://media.<bank>
+  api-url: ${LIVEKIT_API_URL:http://localhost:7880}     # server-to-server (Egress API)
+callcontrol:
+  teller-limit: 5000   # per-teller approval limit; above this the orchestrator needs supervisor override
+storage:               # S3-compatible bucket with Object Lock enabled
+  endpoint: ${STORAGE_ENDPOINT:http://localhost:9000}
+  public-endpoint: ${STORAGE_PUBLIC_ENDPOINT:http://localhost:9000}   # host auditors' browsers can reach, used in pre-signed URLs
+  egress-endpoint: ${STORAGE_EGRESS_ENDPOINT:${storage.endpoint}}   # host the Egress worker writes to (from inside its container: http://minio:9000)
+  region: us-east-1
+  bucket: stm-recordings
+  access-key: minioadmin
+  secret-key: minioadmin
+recording:
+  enabled: ${RECORDING_ENABLED:true}   # false = do not ask Egress to record (dev without Egress). Approvals >= required-above stay blocked.
+  retention-years: 7           # set from your regulator; bucket default retention must match or exceed it
+  required-above: 1000         # approvals at or above this amount are blocked if recording is not healthy

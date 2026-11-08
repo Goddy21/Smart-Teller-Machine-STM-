@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/vendor/blueriver-mark.png">
+<link rel="stylesheet" href="/vendor/blueriver.css">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kiosk test page</title>
+<!-- DEV TEST PAGE. Exercises kiosk-video.js exactly as the kiosk React app will, without the React app or eCAT.
+     Served by call-control (dev profile) at /kiosk/kiosk-test.html. The import map points livekit-client at the vendored copy. -->
+<script type="importmap">{ "imports": { "livekit-client": "/vendor/livekit-client.esm.js" } }</script>
+<style>
+:root{--bg:var(--br-bg);--panel:var(--br-surface);--ink:var(--br-ink);--mute:var(--br-ink-2);--line:var(--br-line);--accent:var(--br-accent);--ok:var(--br-ok);--bad:var(--br-err);--warnbg:var(--br-warn-soft);--warn:var(--br-warn);--video:var(--br-video)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.5 var(--f-body)}
+header{display:flex;gap:16px;align-items:center;padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font:800 18px var(--f-disp);margin:0}
+#state{margin-left:auto;font:700 14px var(--f-body);padding:6px 14px;border-radius:999px;background:var(--br-surface-2)}
+main{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px;padding:16px;max-width:1400px;margin:0 auto}
+.card{background:var(--panel);border-radius:22px;padding:20px;box-shadow:var(--br-shadow)}
+h2{font:700 12px var(--f-body);text-transform:uppercase;letter-spacing:.1em;color:var(--mute);margin:0 0 12px}
+label{display:block;font-size:14px;color:var(--mute);margin:10px 0 3px}
+input,select{width:100%;padding:10px 12px;border:2px solid var(--line);border-radius:12px;background:var(--bg);color:var(--ink);font:inherit}
+button{font:700 16px var(--f-body);padding:12px 20px;border-radius:16px;border:2px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;min-height:52px}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--br-accent);border-color:var(--br-accent);color:var(--br-accent-ink);box-shadow:0 8px 22px rgba(28,36,170,.28)}
+#call.primary{background:var(--br-red);border-color:var(--br-red);color:var(--br-red-ink);box-shadow:0 8px 22px rgba(238,28,37,.3)}
+button.danger{color:var(--bad);border-color:var(--bad)}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.pane{position:relative;background:var(--video);border-radius:18px;overflow:hidden;aspect-ratio:16/9}
+.pane video{width:100%;height:100%;object-fit:cover;display:block}
+.pane p{position:absolute;inset:0;margin:0;display:grid;place-items:center;color:#cfd8e1;text-align:center;padding:16px}
+.previews{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.previews .pane{aspect-ratio:4/3}
+.tag{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.6);color:#fff;font-size:12px;padding:2px 8px;border-radius:4px;z-index:1}
+#notice{display:none;background:var(--warnbg);border:1px solid var(--warn);border-radius:10px;padding:14px;margin-top:12px}
+#notice.on{display:block}
+#warn{display:none;background:var(--warnbg);border:1px solid var(--warn);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:15px}
+#warn.on{display:block}
+#log{font:12px/1.45 ui-monospace,Consolas,monospace;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;height:220px;overflow:auto;white-space:pre-wrap;margin:0}
+#cams{font-size:13px;color:var(--mute);margin:8px 0 0;padding-left:18px}
+#snaps img{max-width:100%;border-radius:8px;margin-top:8px}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><span class="br-brand"><span class="br-plate"><img src="/vendor/blueriver-logo.png" alt="Blue River Technology Solutions"></span><h1>Kiosk test page</h1></span><span id="term" style="color:var(--mute);font-size:14px"></span><span id="state" role="status">Idle</span></header>
+<main>
+  <section>
+    <div id="warn" role="alert"></div>
+    <div class="card">
+      <h2>Your teller</h2>
+      <div class="pane"><video id="teller" autoplay playsinline muted></video><p id="tellerMsg">Tap "Talk to a teller" to start</p></div>
+      <div class="row">
+        <button id="call" class="primary">Talk to a teller</button>
+        <button id="cancel" disabled>Cancel</button>
+        <button id="hangup" class="danger" disabled>Hang up</button>
+      </div>
+      <div id="notice" role="alertdialog" aria-labelledby="noticeTitle">
+        <p id="noticeTitle" style="margin:0 0 6px"><b>This video call is recorded</b></p>
+        <p style="margin:0 0 6px">The recording is kept as part of your transaction record.</p>
+        <div class="row" style="margin-top:6px"><button id="consentYes" class="primary">Continue</button><button id="consentNo">Go back</button></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Simulate kiosk screens (mirrored to the teller)</h2>
+      <div class="row" style="margin-top:0">
+        <button data-fsm="WELCOME" disabled>Welcome</button>
+        <button data-fsm="CASH_DEPOSIT" disabled>Cash deposit</button>
+        <button data-fsm="ACCOUNT_OPENING" disabled>Account opening</button>
+        <button data-fsm="PIN_ENTRY" disabled>PIN entry (masked)</button>
+      </div>
+      <div id="snaps"></div>
+    </div>
+  </section>
+  <aside>
+    <div class="card">
+      <h2>Setup</h2>
+      <label for="tid">Terminal ID (dev only; mTLS identifies the kiosk in production)</label>
+      <input id="tid" autocomplete="off">
+      <label for="lang">Language</label>
+      <input id="lang" list="langs" value="en" autocomplete="off"><datalist id="langs"><option value="en">English</option><option value="sw">Kiswahili</option></datalist>
+      <label for="tx">Transaction ID</label>
+      <input id="tx" autocomplete="off">
+      <label for="camFace">Face camera</label>
+      <select id="camFace"></select>
+      <label for="camId">ID / desk camera</label>
+      <select id="camId"></select>
+      <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="share" checked style="width:auto"> Share this kiosk screen with the teller</label>
+      <div class="row"><button id="testCams">Test cameras</button><button id="stopCams" disabled>Stop preview</button></div>
+      <ul id="cams"></ul>
+      <div class="previews">
+        <div class="pane"><span class="tag">Face</span><video id="pvFace" autoplay playsinline muted></video></div>
+        <div class="pane"><span class="tag">ID / desk</span><video id="pvId" autoplay playsinline muted></video></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Log</h2>
+      <pre id="log" aria-live="polite"></pre>
+    </div>
+  </aside>
+</main>
+<script type="module">
+import { VideoSession } from "./kiosk-video.js";
+const $ = id => document.getElementById(id);
+const T = window.__stm = { states: [], warnings: [], tellerVisible: false, snapshots: 0, dropped: 0, ended: null };
+const log = m => { const l = $("log"); l.textContent += new Date().toLocaleTimeString() + "  " + m + "\n"; l.scrollTop = l.scrollHeight; };
+const warn = m => { T.warnings.push(m); $("warn").textContent = m; $("warn").classList.add("on"); log("WARN " + m); };
+
+// ---- identity (DevGateway reads the stm-terminal cookie) ----
+const q = new URLSearchParams(location.search);
+const saved = (() => { try { return localStorage.getItem("stm-terminal"); } catch { return null; } })();
+$("tid").value = q.get("terminal") || saved || "STM-01";
+$("tx").value = "TX-" + Date.now().toString(36).toUpperCase();
+if (q.get("lang")) $("lang").value = q.get("lang");
+const setTerminal = () => {
+  const v = $("tid").value.trim();
+  document.cookie = "stm-terminal=" + encodeURIComponent(v) + "; path=/; SameSite=Strict";
+  try { localStorage.setItem("stm-terminal", v); } catch {}
+  $("term").textContent = "Terminal " + v;
+};
+$("tid").onchange = setTerminal; setTerminal();
+
+if (!window.isSecureContext || !navigator.mediaDevices) {
+  warn("This address is not a secure origin, so the browser blocks cameras and microphone. Start the STM browser with " +
+       "--unsafely-treat-insecure-origin-as-secure=" + location.origin + " (README, section 'On the STM').");
+}
+
+// ---- cameras ----
+async function listCams() {
+  try { (await navigator.mediaDevices.getUserMedia({ video: true, audio: true })).getTracks().forEach(t => t.stop()); }
+  catch (e) { warn("Camera/microphone permission failed: " + e.name + " " + e.message + (e.name === "NotReadableError" ? " (another program, e.g. the eCAT daemon, may hold the camera)" : "")); }
+  const devs = await navigator.mediaDevices.enumerateDevices();
+  const cams = devs.filter(d => d.kind === "videoinput"), mics = devs.filter(d => d.kind === "audioinput");
+  // Default choice: what you picked last time on this kiosk, else the GRG STM cameras, else the 1st / 2nd camera.
+  const base = l => (l || "").replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, "");
+  const saved = k => { try { return localStorage.getItem(k); } catch { return null; } };
+  const pick = (want, idx) => (cams.find(c => base(c.label) === want) || cams[idx])?.deviceId ?? "";
+  for (const [sel, key, stm, idx] of [[$("camFace"), "stm-cam-face", "DC003-EA(V)", 0], [$("camId"), "stm-cam-id", "LHT-820VM31B", 1]]) {
+    sel.replaceChildren(...cams.map((c, i) => new Option(c.label || "Camera " + (i + 1), c.deviceId)));
+    if (sel === $("camId")) sel.prepend(new Option("(none: publish face camera only)", ""));
+    const s = saved(key);
+    sel.value = s !== null && [...sel.options].some(o => o.text === s) ? [...sel.options].find(o => o.text === s).value : pick(stm, idx);
+    sel.onchange = () => { try { localStorage.setItem(key, sel.selectedOptions[0]?.text ?? ""); } catch {} };
+  }
+  $("cams").replaceChildren(...[...cams.map(c => "Camera: " + (c.label || c.deviceId)), ...mics.map(m => "Microphone: " + (m.label || m.deviceId))]
+    .map(t => Object.assign(document.createElement("li"), { textContent: t })));
+  log(`found ${cams.length} camera(s), ${mics.length} microphone(s)`);
+  T.cameraCount = cams.length;
+}
+let preview = [];
+$("testCams").onclick = async () => {
+  stopPreview();
+  for (const [sel, el] of [[$("camFace"), $("pvFace")], [$("camId"), $("pvId")]]) {
+    if (!sel.value) continue;
+    try { const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: sel.value } } }); preview.push(s); el.srcObject = s; }
+    catch (e) { warn("Could not open " + sel.selectedOptions[0]?.text + ": " + e.name + " " + e.message); }
+  }
+  $("stopCams").disabled = false;
+};
+function stopPreview() { preview.forEach(s => s.getTracks().forEach(t => t.stop())); preview = []; $("pvFace").srcObject = $("pvId").srcObject = null; $("stopCams").disabled = true; }
+$("stopCams").onclick = stopPreview;
+
+// A stand-in "screen" for automated tests: a canvas that draws the current screen name and a clock.
+function fakeScreen() {
+  const c = Object.assign(document.createElement("canvas"), { width: 1280, height: 720 }), g = c.getContext("2d");
+  setInterval(() => { g.fillStyle = "#0b5cad"; g.fillRect(0, 0, 1280, 720); g.fillStyle = "#fff"; g.font = "64px sans-serif";
+    g.fillText("KIOSK SCREEN  " + fsm.name, 60, 200); g.fillText(new Date().toLocaleTimeString(), 60, 320); }, 100);
+  return c.captureStream(10);
+}
+
+// ---- the call ----
+let session = null, fsm = { name: "WELCOME", model: {} };
+const MODELS = {
+  WELCOME: {},
+  CASH_DEPOSIT: () => ({ account: "0123****89", currency: "KES", amount: 500, notesCounted: 5 }),
+  ACCOUNT_OPENING: () => ({ product: "Savings", idType: "National ID", name: "Test Customer" }),
+  PIN_ENTRY: {},
+};
+const setState = s => { T.states.push(s); T.state = s; $("state").textContent = s; log("state " + s); };
+const busy = on => {
+  $("call").disabled = on; $("tid").disabled = $("lang").disabled = $("camFace").disabled = $("camId").disabled = on;
+  document.querySelectorAll("[data-fsm]").forEach(b => b.disabled = !on);
+};
+
+$("call").onclick = () => { stopPreview(); $("notice").classList.add("on"); $("call").disabled = true; };
+$("consentNo").onclick = () => { $("notice").classList.remove("on"); $("call").disabled = false; };
+$("consentYes").onclick = async () => {
+  $("notice").classList.remove("on"); busy(true); $("cancel").disabled = false;
+  $("tellerMsg").textContent = "Connecting you to a teller…";
+  session = new VideoSession({
+    cameras: { face: $("camFace").value, id: $("camId").value || false },
+    shareScreen: $("share").checked,
+    getScreenStream: q.has("fakescreen") ? fakeScreen : undefined,   // automated tests: no real display to capture
+    getFsmState: () => fsm,
+    uploadSnapshot: async (callId, blob) => {
+      T.snapshots++; log(`snapshot ${blob.type} ${blob.size} bytes (dev: shown here; production uploads to the KYC archive)`);
+      const img = new Image(); img.src = URL.createObjectURL(blob); img.alt = "ID snapshot"; $("snaps").replaceChildren(img);
+    },
+    onState: s => {
+      setState(s);
+      if (s === "CONNECTED") { $("cancel").disabled = true; $("hangup").disabled = false; }
+      if (s === "ON_HOLD") $("tellerMsg").textContent = "Reconnecting…";
+    },
+    onDropped: () => { T.dropped++; log("video dropped"); },
+    onWarn: warn,
+    onEnded: s => { T.ended = s; reset(s === "ENDED" ? "The teller ended the call. Thank you." : "Call cancelled."); },
+  });
+  session.setTellerVideo($("teller"), tellerVideo); T.session = session;
+  try {
+    const id = await session.request($("lang").value, $("tx").value.trim());
+    T.callId = id; log("call " + id + " requested");
+    const r = await session.ackConsent(true); log("consent recorded: HTTP " + r.status);
+  } catch (e) { warn(e.message); reset("Could not reach the call service."); }
+};
+
+// The teller's video. Mirrors what <TellerVideoPane session={session}/> does in React.
+const tellerVideo = visible => {
+  T.tellerVisible = visible;
+  $("teller").style.display = visible ? "block" : "none";
+  $("tellerMsg").style.display = visible ? "none" : "grid";
+  if (!visible && session?.hasTeller) $("tellerMsg").textContent = "Your teller has turned their camera off";
+  if (visible) log("teller video showing");
+};
+tellerVideo(false);
+
+$("cancel").onclick = async () => { if (session?.callId) { const r = await session.cancel(); log("cancel: HTTP " + r.status); } };
+$("hangup").onclick = async () => { await session?.close(); reset("You hung up. (The teller still has to end the call on their side.)"); };
+document.querySelectorAll("[data-fsm]").forEach(b => b.onclick = () => {
+  const n = b.dataset.fsm, m = MODELS[n]; fsm = { name: n, model: typeof m === "function" ? m() : m };
+  session?.mirror(); log("mirrored screen " + n);
+});
+
+function reset(msg) {
+  session = null; busy(false); $("cancel").disabled = $("hangup").disabled = true;
+  tellerVideo(false); $("tellerMsg").textContent = msg;
+  $("tx").value = "TX-" + Date.now().toString(36).toUpperCase();
+}
+
+if (navigator.mediaDevices) listCams();
+window.addEventListener("error", e => warn("Script error: " + e.message));
+window.addEventListener("unhandledrejection", e => warn("Error: " + (e.reason?.message || e.reason)));
+</script>
+</body>
+</html>

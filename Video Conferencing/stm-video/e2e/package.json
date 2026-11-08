@@ -1,0 +1,8 @@
+{
+  "name": "stm-video-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Two-browser end-to-end test of a kiosk-teller video call (fake cameras).",
+  "scripts": { "test": "node run.mjs" },
+  "dependencies": { "playwright": "1.59.1" }
+}

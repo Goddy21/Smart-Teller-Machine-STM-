@@ -1,0 +1,22 @@
+# LiveKit for a LAN test: your laptop runs LiveKit, the STM and the teller browser reach it directly. No TURN, no TLS.
+# scripts/start-livekit.ps1 copies this to livekit.lan.generated.yaml with NODE_IP replaced by your laptop's LAN IP.
+# Staging/production: use livekit.yaml (TURN/TLS) instead.
+port: 7880
+bind_addresses: ["0.0.0.0"]
+log_level: info
+rtc:
+  tcp_port: 7881            # ICE/TCP fallback (open in the firewall)
+  port_range_start: 55000   # UDP media ports (open in the firewall). Not 50000+: Windows often reserves ports there
+  port_range_end: 55200     # check: netsh interface ipv4 show excludedportrange protocol=udp
+  use_external_ip: false    # LAN: do not ask STUN servers for a public IP
+  node_ip: NODE_IP          # the address the STM can reach, e.g. 192.168.1.50
+redis:
+  address: localhost:6379   # same Redis as call-control; needed by Egress (recording)
+keys:
+  devkey: change-me-to-a-32+char-secret-value-0000   # must match livekit.api-key/api-secret in application.yml
+webhook:
+  api_key: devkey
+  urls:
+    - http://localhost:8080/webhooks/livekit
+room:
+  empty_timeout: 60          # seconds an empty room stays open (then room_finished ends the call)

@@ -1,0 +1,25 @@
+# Prod profile: secrets MUST come from the environment (no defaults). KCB adapters are Phase 2.
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+
+stm:
+  provisioning-secret: ${PROVISIONING_SECRET}
+  portal-api-key: ${PORTAL_API_KEY}
+  require-client-cert: true   # kiosk token must match the mTLS client certificate CN
+  cors-allowed-origins: ${CORS_ALLOWED_ORIGINS:}   # empty = same-origin only (serve UI and API from one host)
+  allow-teller-key-in-query: false                 # tellers must use POST /api/v1/portal/signaling/ticket
+  portal-auth:
+    allow-shared-key: false                        # people sign in with their own portal account
+    bootstrap-admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}  # first 'admin' only; blank = random, printed once; changed at first sign-in
+
+server:
+  ssl:
+    enabled: true
+    key-store: ${TLS_KEYSTORE}
+    key-store-password: ${TLS_KEYSTORE_PASSWORD}
+    trust-store: ${TLS_TRUSTSTORE}          # CA that signs kiosk client certificates
+    trust-store-password: ${TLS_TRUSTSTORE_PASSWORD}
+    client-auth: want                       # 'need' if the portal is served via a separate listener/gateway

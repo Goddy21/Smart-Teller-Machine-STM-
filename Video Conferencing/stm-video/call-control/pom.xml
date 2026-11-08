@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.3.5</version>
+  </parent>
+  <groupId>com.stm</groupId>
+  <artifactId>call-control</artifactId>
+  <version>0.1.0</version>
+  <properties><java.version>21</java.version></properties>
+  <dependencyManagement><dependencies>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>bom</artifactId><version>2.28.11</version><type>pom</type><scope>import</scope></dependency>
+  </dependencies></dependencyManagement>
+  <dependencies>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-redis</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>
+    <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
+    <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
+    <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-database-postgresql</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>s3</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <!-- Dev convenience: the teller console, the kiosk test page and the vendored livekit-client are served by this
+         service so that /api is same-origin (no CORS, no proxy). In production the STM Portal and the kiosk app serve them. -->
+    <resources>
+      <resource><directory>src/main/resources</directory></resource>
+      <resource><directory>../teller-console</directory><targetPath>static/teller</targetPath></resource>
+      <resource><directory>../kiosk-client</directory><targetPath>static/kiosk</targetPath></resource>
+      <resource><directory>../vendor</directory><targetPath>static/vendor</targetPath></resource>
+    </resources>
+    <plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>
+</project>

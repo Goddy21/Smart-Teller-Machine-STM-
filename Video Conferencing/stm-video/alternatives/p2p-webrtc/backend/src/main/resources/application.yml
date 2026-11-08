@@ -1,0 +1,21 @@
+server.port: 8080
+spring:
+  datasource:
+    url: jdbc:sqlserver://localhost:1433;databaseName=brits;encrypt=true;trustServerCertificate=true
+    username: brits
+    password: change-me
+  jpa:
+    hibernate.ddl-auto: none        # schema comes from Flyway (db/migration)
+    open-in-view: false
+brits.webrtc:
+  allowed-origins: "https://stm-portal.yourdomain.com,https://localhost:*"
+  ring-timeout-seconds: 20
+  max-queue-wait-seconds: 120       # then the customer is told no teller is available
+  reconnect-grace-seconds: 30       # signaling socket may drop and return without ending the call
+  dev-identity: false               # true = accept ?terminal= / ?teller= on the socket URL (local testing only)
+turn:
+  host: turn.stm.yourdomain.com
+  port: 3478
+  tls-port: 5349
+  secret: CHANGE_ME_TO_A_LONG_RANDOM_SECRET   # same value as static-auth-secret in turnserver.conf; load from your vault
+  ttl-seconds: 600

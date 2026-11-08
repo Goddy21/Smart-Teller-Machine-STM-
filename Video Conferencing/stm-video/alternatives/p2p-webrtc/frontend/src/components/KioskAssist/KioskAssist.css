@@ -1,0 +1,8 @@
+.ka { display: grid; gap: 16px; justify-items: center; padding: 16px; }
+.ka button { font: inherit; font-size: 22px; padding: 18px 36px; border-radius: 12px; border: 2px solid transparent; cursor: pointer; min-width: 260px; }
+.ka-primary { background: #1d4ed8; color: #fff; }
+.ka-secondary { background: transparent; color: inherit; border-color: currentColor !important; }
+.ka-danger { background: #b3261e; color: #fff; }
+.ka-note { max-width: 520px; text-align: center; opacity: .8; font-size: 16px; margin: 0; }
+.ka-status { font-size: 22px; margin: 0; text-align: center; }
+.ka .video-call { max-width: 900px; }

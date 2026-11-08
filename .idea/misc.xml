@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ExternalStorageConfigurationManager" enabled="true" />
+  <component name="MavenProjectsManager">
+    <option name="originalFiles">
+      <list>
+        <option value="$PROJECT_DIR$/stm-middleware/pom.xml" />
+        <option value="$PROJECT_DIR$/Video Conferencing/Teller console UI/pom.xml" />
+        <option value="$PROJECT_DIR$/stm-middleware/stm-middleware/pom.xml" />
+        <option value="$PROJECT_DIR$/Video Conferencing/stm-video/alternatives/p2p-webrtc/backend/pom.xml" />
+      </list>
+    </option>
+  </component>
+  <component name="ProjectRootManager" version="2" project-jdk-name="25" project-jdk-type="JavaSDK">
+    <output url="file://$PROJECT_DIR$/out" />
+  </component>
+</project>

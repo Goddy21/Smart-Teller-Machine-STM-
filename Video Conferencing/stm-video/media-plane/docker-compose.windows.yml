@@ -1,0 +1,46 @@
+# Laptop / LAN test on Windows (Docker Desktop). Ports are mapped instead of host networking, which Docker Desktop
+# does not give you. LiveKit itself runs natively (scripts/start-livekit.ps1) so its UDP media reaches the STM directly.
+#   docker compose -f media-plane/docker-compose.windows.yml up -d                       (Redis, Postgres: enough for calls)
+#   docker compose -f media-plane/docker-compose.windows.yml --profile recording up -d   (also MinIO + Egress: records calls)
+# MinIO stopped publishing free images to Docker Hub (minio/minio). Set MINIO_IMAGE / MC_IMAGE to an image you can pull
+# (e.g. one your company mirrors) before using the recording profile.
+# Staging on Linux: docker-compose.yml (host networking, TURN).
+name: stm-video
+services:
+  redis:
+    image: redis:7.4
+    ports: ["127.0.0.1:6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+  postgres:
+    image: postgres:16
+    ports: ["127.0.0.1:${PG_PORT:-5434}:5432"]   # 5434: Windows often reserves 5432 once Hyper-V/WSL is on
+    environment: { POSTGRES_DB: stm, POSTGRES_USER: stm, POSTGRES_PASSWORD: change-me }
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+  minio:
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
+    profiles: ["recording"]
+    ports: ["9000:9000", "9001:9001"]          # 9001 = MinIO web console (minioadmin / minioadmin)
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes: ["miniodata:/data"]
+  minio-init:   # DEV ONLY: GOVERNANCE 1d. Production: your WORM store, COMPLIANCE mode, retention per regulator.
+    image: ${MC_IMAGE:-quay.io/minio/mc:latest}
+    profiles: ["recording"]
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 1; done;
+      mc mb --with-lock --ignore-existing local/stm-recordings;
+      mc retention set --default GOVERNANCE 1d local/stm-recordings; exit 0;"
+  egress:       # optional: only with --profile recording. Then start call-control with -Recording (see the script).
+    image: livekit/egress:latest   # pin an exact version before staging
+    profiles: ["recording"]
+    cap_add: [SYS_ADMIN]
+    depends_on: [redis, minio]
+    environment:
+      EGRESS_CONFIG_BODY: |
+        log_level: info
+        api_key: devkey
+        api_secret: change-me-to-a-32+char-secret-value-0000
+        ws_url: ws://host.docker.internal:7880
+        redis:
+          address: redis:6379
+volumes: { pgdata: {}, miniodata: {} }

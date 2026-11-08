@@ -1,0 +1,30 @@
+/* Blue River Smart Teller theme (from the Smart Teller prototype v2.0): brand blue #1C24AA carries actions and
+   selection, red #EE1C25 marks attention (incoming call, teller help). Shared by the teller console, the kiosk test
+   page and the teller display. Fonts load from Google Fonts; offline, the system fonts take over. */
+@import url("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@500;600&family=Red+Hat+Display:wght@600;700;800;900&display=swap");
+:root{
+  --br-bg:#EEF0F8; --br-surface:#FFFFFF; --br-surface-2:#ECEEF7; --br-ink:#121426; --br-ink-2:#4E5370; --br-line:#D6D9EA;
+  --br-accent:#1C24AA; --br-accent-2:#3A44D4; --br-accent-ink:#FFFFFF; --br-accent-soft:#E2E4F8;
+  --br-red:#EE1C25; --br-red-ink:#FFFFFF; --br-red-soft:#FDE3E4; --br-red-text:#C8141C;
+  --br-ok:#0C7A4E; --br-ok-soft:#DAF2E6; --br-warn:#9A5A00; --br-warn-soft:#FCEACB; --br-err:#B3121A; --br-err-soft:#FADCDC;
+  --br-hero-1:#0D1270; --br-hero-2:#1C24AA; --br-video:#05060A; --br-plate:#FFFFFF;
+  --br-shadow:0 1px 2px rgba(18,20,38,.06),0 10px 28px rgba(18,20,38,.08);
+  --f-disp:"Red Hat Display","Segoe UI",system-ui,sans-serif;
+  --f-body:"Atkinson Hyperlegible","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --br-bg:#06071A; --br-surface:#121533; --br-surface-2:#1B1F45; --br-ink:#ECEEFB; --br-ink-2:#A3A8C8; --br-line:#2A2F5A;
+  --br-accent:#8089FF; --br-accent-2:#5A64F0; --br-accent-ink:#070A2E; --br-accent-soft:#1E2361;
+  --br-red:#FF4A52; --br-red-ink:#2A0406; --br-red-soft:#3D1218; --br-red-text:#FF6B72;
+  --br-ok:#45D196; --br-ok-soft:#0E3226; --br-warn:#F3B451; --br-warn-soft:#3A290C; --br-err:#FF6F75; --br-err-soft:#3E1418;
+  --br-hero-1:#05072E; --br-hero-2:#141B86; --br-video:#000;
+  --br-shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px rgba(0,0,0,.35);
+  color-scheme:dark;
+}}
+.br-plate{background:var(--br-plate);border-radius:10px;padding:3px 8px;display:inline-flex;align-items:center}
+.br-plate img{height:34px;display:block}
+.br-brand{display:flex;align-items:center;gap:12px}
+.br-brand b{font:800 17px var(--f-disp);letter-spacing:-.01em}
+.br-brand small{display:block;font:500 12px var(--f-mono);color:var(--br-ink-2)}

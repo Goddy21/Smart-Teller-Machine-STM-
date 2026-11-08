@@ -1,0 +1,6 @@
+# Demo profile: simulated core banking, IPRS, KRA, SMS, card system/HSM and Paybill (backend.sim).
+# Sample customers and scenarios are in the V4 migration (sim_registry, sim_customers). No bank connectivity needed.
+stm:
+  sim:
+    latency-ms: 120        # simulated back-end latency; 0 for the fastest tests
+    fixed-otp: "123456"    # every one-time code is 123456 (blank = random codes, printed in the middleware log by the simulated SMS gateway)

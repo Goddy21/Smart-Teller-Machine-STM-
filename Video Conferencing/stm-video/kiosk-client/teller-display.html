@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/vendor/blueriver-mark.png">
+<link rel="stylesheet" href="/vendor/blueriver.css">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teller display</title>
+<!-- The STM's UPPER screen. Open full screen on that monitor (scripts/open-teller-display-on-stm.cmd):
+       /kiosk/teller-display.html?terminal=STM-01
+     It joins the call as a hidden, receive-only participant and shows the teller's camera. No sound: the kiosk page
+     on the lower screen already plays the teller's voice (two players would echo). -->
+<script type="importmap">{ "imports": { "livekit-client": "/vendor/livekit-client.esm.js" } }</script>
+<style>
+:root{--ink:#FFFFFF;--mute:rgba(255,255,255,.78);color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:radial-gradient(1200px 700px at 85% 15%,rgba(238,28,37,.20),transparent 60%),linear-gradient(150deg,#1C24AA,#0D1270);color:var(--ink);font:24px/1.4 var(--f-body);overflow:hidden;cursor:none}
+#mark{position:fixed;right:-4vw;bottom:-6vh;height:70vh;opacity:.10;pointer-events:none}
+#plate{position:fixed;left:40px;top:36px;background:#fff;border-radius:18px;padding:8px 18px}#plate img{height:72px;display:block}
+body.live #plate,body.live #mark{display:none}
+#stage{position:fixed;inset:0;display:grid;place-items:center}
+video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#000;display:none}
+body.live video{display:block}
+#msg{text-align:center;padding:40px;max-width:80vw}
+#msg h1{font:900 clamp(36px,6vw,96px)/1.02 var(--f-disp);margin:0 0 20px;letter-spacing:-.03em}
+#msg h1 em{font-style:normal;color:#FF6B72}
+#msg p{font-size:clamp(18px,2.2vw,34px);margin:0;color:var(--mute)}
+body.live #msg{display:none}
+#name{position:fixed;left:32px;bottom:32px;background:rgba(13,18,112,.72);padding:12px 22px;border-radius:999px;font-family:var(--f-body);font-weight:700;font-size:clamp(18px,2vw,30px);display:none}
+body.live #name{display:block}
+#dot{position:fixed;right:24px;bottom:20px;width:12px;height:12px;border-radius:50%;background:#e5534b;opacity:.7}
+body.online #dot{background:#3fb950}
+</style>
+</head>
+<body>
+<img id="mark" src="/vendor/blueriver-mark.png" alt=""><div id="plate"><img src="/vendor/blueriver-logo.png" alt="Blue River Technology Solutions"></div>
+<div id="stage"><div id="msg"><h1 id="title">Need help? <em>Talk to a teller.</em></h1><p id="sub">Tap "Talk to a teller" on the screen below.</p></div></div>
+<video id="v" autoplay playsinline muted></video>
+<div id="name"></div>
+<div id="dot" title="connection to the call service"></div>
+<script type="module">
+import { Room, RoomEvent } from "livekit-client";
+const $ = id => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+const terminal = q.get("terminal") || "STM-01";
+const D = window.__display = { live: false, state: "idle", terminal };
+document.cookie = "stm-terminal=" + encodeURIComponent(terminal) + "; path=/; SameSite=Strict";
+let room = null;
+
+function idle(title, sub = 'Tap "Talk to a teller" on the screen below.') {
+  D.live = false; D.state = "idle"; document.body.classList.remove("live");
+  if (title) $("title").textContent = title; else $("title").innerHTML = "Need help? <em>Talk to a teller.</em>";
+  $("sub").textContent = sub; $("v").srcObject = null;
+}
+function show(track, pub, who) {
+  track.attach($("v"));
+  const live = !pub.isMuted;
+  D.live = live; D.state = live ? "live" : "camera-off"; document.body.classList.toggle("live", live);
+  if (!live) idle("Your teller is with you", "Their camera is off. You can still talk to them.");
+  $("name").textContent = who ? "Your teller: " + who.replace(/^Teller\s+/, "") : "Your teller";
+}
+
+async function join({ url, token, callId }) {
+  if (room) await room.disconnect();
+  D.callId = callId; idle("Connecting you to a teller…", "Please wait a moment.");
+  const r = room = new Room({ adaptiveStream: true });
+  const want = pub => pub.trackName === "teller-cam";
+  r.on(RoomEvent.TrackPublished, pub => { if (want(pub)) pub.setSubscribed(true); });
+  r.on(RoomEvent.TrackSubscribed, (track, pub, p) => { if (want(pub)) show(track, pub, p.name); });
+  r.on(RoomEvent.TrackUnsubscribed, (track, pub) => { if (want(pub)) { track.detach(); idle("Your teller is with you", "Reconnecting the video…"); } });
+  r.on(RoomEvent.TrackMuted, pub => { if (want(pub)) idle("Your teller is with you", "Their camera is off. You can still talk to them."); });
+  r.on(RoomEvent.TrackUnmuted, (pub, p) => { if (want(pub) && pub.track) show(pub.track, pub, p.name); });
+  r.on(RoomEvent.Disconnected, () => { if (room === r) { room = null; idle(); } });
+  await r.connect(url, token, { autoSubscribe: false });   // video only: never subscribe to audio here
+  for (const p of r.remoteParticipants.values()) for (const pub of p.trackPublications.values()) if (want(pub)) pub.setSubscribed(true);
+}
+
+function listen() {
+  const es = new EventSource(`/api/terminals/me/display-events?terminalId=${encodeURIComponent(terminal)}`);
+  es.onopen = () => document.body.classList.add("online");
+  es.onerror = () => document.body.classList.remove("online");     // EventSource reconnects by itself
+  es.addEventListener("connected", e => join(JSON.parse(e.data)).catch(err => { console.error(err); idle(); }));
+  es.addEventListener("ended", async () => { const r = room; room = null; await r?.disconnect(); idle("Thank you", "Your call has ended."); setTimeout(() => { if (!room) idle(); }, 8000); });
+}
+idle(); listen();
+</script>
+</body>
+</html>

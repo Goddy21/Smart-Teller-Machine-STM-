@@ -1,0 +1,10 @@
+target/
+node_modules/
+build/
+dist/
+.idea/
+*.iml
+*.log
+media-plane/certs/
+media-plane/bin/
+media-plane/livekit.lan.generated.yaml

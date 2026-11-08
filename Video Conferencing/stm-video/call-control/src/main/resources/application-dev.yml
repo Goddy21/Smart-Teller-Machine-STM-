@@ -1,0 +1,6 @@
+# Activated with --spring.profiles.active=dev (the scripts in ../scripts do this). LAN / laptop testing only.
+# Enables DevGateway (identities from cookies instead of the Terminal API Gateway) and the bundled test pages:
+#   http://<host>:8080/            index of test pages
+#   http://<host>:8080/teller/     teller console
+#   http://<host>:8080/kiosk/kiosk-test.html   kiosk test page (open on the STM)
+logging.level.com.stm.callcontrol: DEBUG

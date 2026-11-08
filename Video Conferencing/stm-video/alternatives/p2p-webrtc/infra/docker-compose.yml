@@ -1,0 +1,10 @@
+services:
+  coturn:
+    image: coturn/coturn:latest      # PIN an exact version before staging
+    container_name: stm-turn
+    restart: unless-stopped
+    network_mode: host               # TURN needs real UDP/TCP ports, not Docker NAT
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./certs:/certs:ro            # fullchain.pem + privkey.pem for turn.stm.yourdomain.com
+    command: ["-c", "/etc/coturn/turnserver.conf"]

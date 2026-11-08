@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/vendor/blueriver-mark.png">
+<link rel="stylesheet" href="/vendor/blueriver.css">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teller console</title>
+<style>
+/* Old variable names mapped onto the Blue River Smart Teller tokens (vendor/blueriver.css). */
+:root{--bg:var(--br-bg);--panel:var(--br-surface);--ink:var(--br-ink);--mute:var(--br-ink-2);--line:var(--br-line);--amber:var(--br-accent);--amberbg:var(--br-accent-soft);--ok:var(--br-ok);--bad:var(--br-err);--video:var(--br-video)}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--f-body);display:grid;grid-template-columns:260px 1fr 320px;grid-template-rows:auto 1fr}
+header{grid-column:1/-1;display:flex;gap:16px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font:800 17px var(--f-disp);margin:0;letter-spacing:-.01em}
+#callstate{margin-left:auto;font:700 13px var(--f-body);padding:6px 14px;border-radius:999px;background:var(--br-surface-2);color:var(--mute)}
+#callstate.live{background:var(--br-ok-soft);color:var(--ok)}
+aside,section{padding:16px;overflow:auto;min-height:0}
+aside{background:var(--panel)}
+#left{border-right:1px solid var(--line)}
+#right{border-left:1px solid var(--line)}
+h2{font:700 11px var(--f-body);text-transform:uppercase;letter-spacing:.1em;color:var(--mute);margin:20px 0 8px}
+h2:first-child{margin-top:0}
+label{display:block;font-size:13px;color:var(--mute);margin:8px 0 2px}
+input{width:100%;padding:9px 11px;border:2px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font:inherit}
+button{font:700 14px var(--f-body);padding:9px 16px;border-radius:12px;border:2px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button:hover:not(:disabled){border-color:var(--mute)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--br-accent);border-color:var(--br-accent);color:var(--br-accent-ink);box-shadow:0 6px 16px rgba(28,36,170,.25)}
+button.danger{color:var(--bad);border-color:var(--bad)}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.row{display:flex;gap:8px;margin-top:10px}.row>*{flex:1}
+#ring{display:none;background:var(--br-red-soft);border:2px solid var(--br-red);border-radius:16px;padding:14px;margin-top:14px;animation:ringpulse 1.2s ease-in-out infinite}
+@keyframes ringpulse{50%{box-shadow:0 0 0 6px rgba(238,28,37,.15)}}
+@media (prefers-reduced-motion:reduce){#ring{animation:none}}
+#ring.on{display:block}
+#ring p{margin:0 0 4px}
+#presence[aria-pressed=true]{background:var(--ok);border-color:var(--ok);color:var(--br-accent-ink)}
+#stage{display:grid;grid-template-columns:3fr 2fr;gap:12px;align-content:start}
+.pane{position:relative;background:var(--video);border-radius:16px;overflow:hidden;aspect-ratio:16/10}
+.pane video{width:100%;height:100%;object-fit:contain;display:block;transform-origin:50% 50%}
+.pane .tag{position:absolute;left:10px;top:10px;background:rgba(5,6,10,.62);color:#fff;font:700 12px var(--f-body);padding:4px 10px;border-radius:999px;z-index:1}
+.pane .empty{position:absolute;inset:0;display:grid;place-items:center;color:#8fa1b3;font-size:14px;text-align:center;padding:12px}
+.pane.has .empty{display:none}
+#zoomrow{display:flex;align-items:center;gap:10px;margin-top:8px;grid-column:1/-1;font-size:13px;color:var(--mute)}
+#zoomrow input{width:160px;padding:0}
+#banner{display:none;margin-bottom:12px;padding:12px 16px;border-radius:14px;background:var(--br-warn-soft);color:var(--ink)}
+#banner.on{display:block}
+#msg{min-height:1.4em;margin-top:10px;font-size:13px;color:var(--bad)}
+dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:14px}
+dt{color:var(--mute)}dd{margin:0;word-break:break-word}
+.masked{padding:12px;border:2px dashed var(--line);border-radius:12px;color:var(--mute)}
+.limit{font-size:13px;color:var(--mute)}
+.limit.over{color:var(--bad)}
+@media (max-width:1000px){body{grid-template-columns:1fr;grid-template-rows:auto}#left,#right{border:0}#stage{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <span class="br-brand"><span class="br-plate"><img src="/vendor/blueriver-logo.png" alt="Blue River Technology Solutions"></span><span><h1>Teller console</h1><small>Smart Teller video help</small></span></span>
+  <span id="who" class="limit"></span>
+  <span id="callstate" role="status">No active call</span>
+</header>
+
+<aside id="left">
+  <h2>Availability</h2>
+  <label for="tid">Teller ID (dev only; the gateway sets this in production)</label>
+  <input id="tid" value="teller1" autocomplete="off">
+  <label for="langs">Languages you serve</label>
+  <input id="langs" value="en,sw" autocomplete="off">
+  <div class="row"><button id="presence" aria-pressed="false">Go available</button></div>
+  <div id="ring" role="alertdialog" aria-live="assertive">
+    <p><b>Incoming call</b></p>
+    <p id="ringinfo"></p>
+    <div class="row"><button id="accept" class="primary">Accept</button><button id="decline">Decline</button></div>
+  </div>
+</aside>
+
+<section id="mid">
+  <div id="banner" role="alert"></div>
+  <div id="stage">
+    <div class="pane" id="facepane"><span class="tag">Customer face</span><div class="empty">Waiting for the customer camera</div><video id="face" autoplay playsinline muted></video></div>
+    <div class="pane" id="idpane"><span class="tag">Second camera / ID</span><div class="empty">Waiting for the second camera</div><video id="idcam" autoplay playsinline muted></video></div>
+    <div class="pane" id="scrpane" style="grid-column:1/-1;aspect-ratio:16/9"><span class="tag">Customer screen (live)</span><div class="empty" id="scrempty">Waiting for the kiosk screen</div><video id="scr" autoplay playsinline muted style="object-fit:contain"></video></div>
+    <div id="zoomrow"><label for="zoom" style="margin:0">Zoom ID</label><input id="zoom" type="range" min="1" max="4" step="0.25" value="1"><span id="zoomv">1x</span>
+      <button id="snap" disabled>Request ID snapshot</button><span id="snapstatus"></span></div>
+  </div>
+  <div id="msg" role="alert"></div>
+</section>
+
+<aside id="right">
+  <h2>You</h2>
+  <div class="pane" id="selfpane" style="aspect-ratio:4/3"><span class="tag">Your camera</span><div class="empty">Camera off</div><video id="self" autoplay playsinline muted style="transform:scaleX(-1)"></video></div>
+  <div class="row"><button id="micbtn" disabled aria-pressed="false">Mute mic</button><button id="cambtn" disabled aria-pressed="false">Camera off</button></div>
+  <h2>Customer screen</h2>
+  <div id="mirror" class="masked">No call</div>
+  <h2>Decision</h2>
+  <label for="amount">Transaction amount</label>
+  <input id="amount" type="number" min="0" step="1" inputmode="numeric">
+  <div id="limit" class="limit"></div>
+  <div class="row"><button id="approve" class="primary" disabled>Approve</button><button id="reject" class="danger" disabled>Reject</button></div>
+  <h2>Call</h2>
+  <div class="row"><button id="end" disabled>End call</button></div>
+</aside>
+
+<!-- livekit-client 2.23.0: the vendored copy (served by call-control in dev, works offline on a LAN); CDN only as fallback.
+     Production: bundle livekit-client with the STM Portal instead. -->
+<script src="/vendor/livekit-client.umd.js"></script>
+<script>window.LivekitClient || document.write('<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.23.0/dist/livekit-client.umd.js"><\/script>')</script>
+<script>
+"use strict";
+const CFG = { api: "/api", limit: 5000, ringSeconds: 22 };   // limit must match callcontrol.teller-limit
+const { Room, RoomEvent } = LivekitClient;
+const $ = id => document.getElementById(id);
+const S = window.__teller = { available: false, ctl: null, room: null, call: null, ringTimer: null };
+
+{ const t = new URLSearchParams(location.search).get("teller"); if (t) $("tid").value = t; }
+const hdr = () => ({ "Content-Type": "application/json", "X-Teller-Id": $("tid").value.trim() });
+const say = (t, bad = true) => { $("msg").textContent = t || ""; $("msg").style.color = bad ? "var(--bad)" : "var(--mute)"; };
+const setState = t => { $("callstate").textContent = t; $("callstate").classList.toggle("live", /connected|in call/i.test(t)); };
+
+async function api(method, path, body) {
+  const r = await fetch(CFG.api + path, { method, headers: hdr(), body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) {
+    let m = ""; try { m = (await r.json()).error || ""; } catch (e) {}
+    throw new Error(m || `Request failed (${r.status})`);
+  }
+  const t = await r.text(); return t ? JSON.parse(t) : null;
+}
+
+// Fetch-based SSE reader: EventSource cannot send the X-Teller-Id header used in dev.
+// onOpen runs once the service has accepted the stream; every byte received (events and the 15 s pings) counts as life.
+async function listen(path, handlers, signal, onOpen) {
+  const r = await fetch(CFG.api + path, { headers: hdr(), signal });
+  if (!r.ok || !r.body) throw new Error("event stream refused (" + r.status + ")");
+  S.lastData = Date.now(); onOpen?.();
+  const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+  for (;;) {
+    const { done, value } = await rd.read(); if (done) return;
+    S.lastData = Date.now();
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const blk = buf.slice(0, i); buf = buf.slice(i + 2);
+      let ev = "message", data = "";
+      for (const l of blk.split("\n")) { if (l.startsWith("event:")) ev = l.slice(6).trim(); else if (l.startsWith("data:")) data += l.slice(5).trim(); }
+      if (data && handlers[ev]) handlers[ev](JSON.parse(data));
+    }
+  }
+}
+
+// ---- availability ----
+const langs = () => $("langs").value.split(",").map(s => s.trim()).filter(Boolean);
+function showPresence() {
+  $("presence").setAttribute("aria-pressed", S.available);
+  $("presence").textContent = S.available ? "Available (tap to go away)" : "Go available";
+  $("tid").disabled = $("langs").disabled = S.available;
+  $("who").textContent = S.available ? "Signed in as " + $("tid").value : "";
+}
+// The service set this teller away (missed or declined a ring, or presence expired): show the truth.
+function goneAway(message) {
+  S.available = false; clearInterval(S.hb); S.ctl?.abort(); showPresence(); say(message);
+}
+
+$("presence").onclick = async () => {
+  $("presence").disabled = true;
+  try {
+    if (!S.available) {
+      S.available = true;
+      // Open the event stream FIRST, then announce availability: a call can ring the moment we are available.
+      await new Promise((ok, fail) => { openStream(ok); setTimeout(() => fail(new Error("event stream did not open")), 8000); });
+      await api("PUT", "/tellers/me/presence", { available: true, langs: langs() });
+      clearInterval(S.hb);
+      S.hb = setInterval(heartbeat, 20000);   // presence expires after 60 s without it
+      say("");
+    } else {
+      await api("PUT", "/tellers/me/presence", { available: false, langs: langs() });
+      S.available = false; clearInterval(S.hb); S.ctl?.abort(); say("");
+    }
+  } catch (e) { S.available = false; S.ctl?.abort(); say("Could not change availability: " + e.message); }
+  finally { showPresence(); $("presence").disabled = false; }
+};
+
+async function heartbeat() {
+  let h = null;
+  try { h = await api("POST", "/tellers/me/heartbeat"); } catch (e) { say("Cannot reach the call service. Retrying."); return; }
+  if (!S.available) return;
+  if (h && h.present === false) {   // presence expired (laptop slept): re-announce
+    try { await api("PUT", "/tellers/me/presence", { available: true, langs: langs() }); } catch (e) { }
+  } else if (h && h.available === false && !S.call && !S.room && !$("ring").classList.contains("on")) {
+    return goneAway("You missed a call, so the service set you to away. Tap Go available when you are ready.");
+  }
+  // The service no longer has our event stream, or nothing (not even a ping) arrived for 45 s: reconnect.
+  if ((h && h.stream === false) || Date.now() - (S.lastData || 0) > 45000) S.ctl?.abort();
+}
+
+async function openStream(onFirstOpen) {
+  if (S.streaming) { onFirstOpen?.(); return; }
+  S.streaming = true;
+  try {
+    while (S.available) {
+      S.ctl = new AbortController();   // a fresh controller per attempt: an aborted one would fail every retry
+      try {
+        await listen("/tellers/me/events", { ring: showRing, cancelled: onCancelled, ended: onEnded }, S.ctl.signal,
+          () => { if (onFirstOpen) { onFirstOpen(); onFirstOpen = null; } else say("Reconnected to the call service.", false); });
+      } catch (e) { if (!S.available) return; say("Lost connection to the call service. Reconnecting…"); }
+      if (S.available) await new Promise(r => setTimeout(r, 2000));
+    }
+  } finally { S.streaming = false; }
+}
+
+function onCancelled(ev) {
+  hideRing();
+  if (ev.reason === "timeout") goneAway("You missed a call, so the service set you to away. The customer is still waiting in the queue: tap Go available.");
+  else if (ev.reason === "declined") goneAway("You declined the call and are set to away. Tap Go available for the next one.");
+  else if (ev.reason) say("The customer cancelled the call.", false);
+}
+
+// ---- ringing ----
+function showRing(c) {
+  S.call = { id: c.callId, txId: c.txId, terminalId: c.terminalId };
+  $("ringinfo").textContent = `Terminal ${c.terminalId}, language ${c.lang}, transaction ${c.txId}`;
+  $("ring").classList.add("on"); setState("Incoming call");
+  let left = CFG.ringSeconds; clearInterval(S.ringTimer);
+  S.ringTimer = setInterval(() => { if (--left <= 0) hideRing(); }, 1000);
+}
+function hideRing() { clearInterval(S.ringTimer); $("ring").classList.remove("on"); if (!S.room) { S.call = null; setState("No active call"); } }
+
+$("decline").onclick = async () => { const id = S.call.id; hideRing(); try { await api("POST", `/calls/${id}/decline`); } catch (e) { say(e.message); } };
+$("accept").onclick = async () => {
+  try {
+    const call = S.call, id = call.id; hideRing(); S.call = call;   // hideRing clears S.call while no room exists
+    const j = await api("POST", `/calls/${id}/accept`);
+    await joinRoom(j);
+  } catch (e) { say("Could not accept the call: " + e.message); S.call = null; setState("No active call"); }
+};
+
+// ---- media ----
+async function joinRoom({ url, token }) {
+  const room = new Room({ adaptiveStream: true });
+  S.room = room;
+  const PANES = { "id-cam": "idcam", "kiosk-screen": "scr" };
+  room.on(RoomEvent.TrackSubscribed, (track, pub) => {
+    if (track.kind === "audio") { const a = track.attach(); a.dataset.stm = "customer-audio"; a.style.display = "none"; document.body.appendChild(a); S.heard = true; return; }
+    const el = $(PANES[pub.trackName] || "face");
+    track.attach(el); el.parentElement.classList.toggle("has", !pub.isMuted);
+  });
+  room.on(RoomEvent.TrackUnsubscribed, (track, pub) => {
+    track.detach().forEach(el => { if (el.dataset?.stm) el.remove(); });
+    const id = PANES[pub.trackName] || (pub.kind === "video" ? "face" : null); if (id) $(id).parentElement.classList.remove("has");
+  });
+  // The kiosk hides its live screen on PIN / card screens: show why instead of a frozen picture.
+  room.on(RoomEvent.TrackMuted, pub => { if (pub.trackName === "kiosk-screen") { $("scrpane").classList.remove("has"); $("scrempty").textContent = "Hidden: the customer is on a private screen (PIN or card)."; } });
+  room.on(RoomEvent.TrackUnmuted, pub => { if (pub.trackName === "kiosk-screen") { $("scrpane").classList.add("has"); } });
+  room.on(RoomEvent.DataReceived, (payload, _p, _k, topic) => { if (topic === "fsm") renderMirror(JSON.parse(new TextDecoder().decode(payload))); });
+  room.on(RoomEvent.ParticipantDisconnected, () => banner("The customer disconnected. The service is holding the transaction. Wait for them to reconnect before deciding."));
+  room.on(RoomEvent.ParticipantConnected, () => { clearTimeout(S.joinTimer); banner(""); });
+  room.on(RoomEvent.Disconnected, () => { if (S.room) { say("You were disconnected from the call. Rejoin is not available yet; end the call and contact IT."); } });
+  await room.connect(url, token);
+  const lp = room.localParticipant, T = LivekitClient.Track.Source;
+  try {   // the customer must hear the teller, and the recording needs a teller track
+    S.mic = await LivekitClient.createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true });
+    await lp.publishTrack(S.mic, { name: "mic", source: T.Microphone });
+  } catch (e) { S.mic = null; say("Microphone unavailable: " + e.message + ". The customer cannot hear you."); }
+  try {   // modest resolution: the kiosk subscribes to this over a branch link
+    S.cam = await LivekitClient.createLocalVideoTrack({ resolution: { width: 640, height: 360, frameRate: 24 } });
+    await lp.publishTrack(S.cam, { name: "teller-cam", source: T.Camera });
+    S.cam.attach($("self")); $("selfpane").classList.add("has");
+  } catch (e) { S.cam = null; say("Camera unavailable: " + e.message + ". The customer will not see you."); }
+  setState("Connected to terminal " + S.call.terminalId);
+  $("amount").value = ""; setControls(true);
+  // The customer's kiosk should join within seconds. If not, its page was closed or lost the network.
+  clearTimeout(S.joinTimer);
+  if (room.remoteParticipants.size === 0) {
+    banner("Waiting for the customer's kiosk to join the video…");
+    S.joinTimer = setTimeout(() => { if (S.room === room && room.remoteParticipants.size === 0)
+      banner("The customer's kiosk has not joined. They may have left. End the call to take the next customer."); }, 15000);
+  }
+}
+const banner = t => { $("banner").textContent = t; $("banner").classList.toggle("on", !!t); };
+
+function renderMirror(m) {
+  S.lastMirror = m;
+  const box = $("mirror"); box.replaceChildren(); box.className = "";
+  if (m.masked) { box.className = "masked"; box.textContent = "The customer is on a private screen (" + m.state + "). It is hidden on purpose."; return; }
+  const dl = document.createElement("dl");
+  const add = (k, v) => { const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = typeof v === "object" ? JSON.stringify(v) : String(v); dl.append(dt, dd); };
+  add("Screen", m.state);
+  for (const [k, v] of Object.entries(m.model || {})) add(k, v);
+  box.append(dl);
+}
+
+// ---- ID tools ----
+$("zoom").oninput = e => { $("idcam").style.transform = `scale(${e.target.value})`; $("zoomv").textContent = e.target.value + "x"; };
+$("idpane").onmousemove = e => { const r = e.currentTarget.getBoundingClientRect(); $("idcam").style.transformOrigin = `${(e.clientX - r.left) / r.width * 100}% ${(e.clientY - r.top) / r.height * 100}%`; };
+$("snap").onclick = async () => {
+  if (!S.room) return;
+  await S.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: "snapshot" })), { reliable: true, topic: "ctl" });
+  $("snapstatus").textContent = "Requested. The kiosk uploads the full-resolution image to the KYC archive.";
+};
+
+// ---- decision and end ----
+function checkLimit() {
+  const v = Number($("amount").value), over = v > CFG.limit;
+  $("limit").textContent = over ? `Over your limit of ${CFG.limit}. Ask a supervisor for an override.` : `Your approval limit is ${CFG.limit}.`;
+  $("limit").classList.toggle("over", over);
+  $("approve").disabled = !S.room || over || !(v > 0);
+}
+$("amount").oninput = checkLimit;
+async function decide(approve) {
+  try {
+    await api("POST", `/calls/${S.call.id}/decision`, { approve, amount: Number($("amount").value) || 0 });
+    say(approve ? "Approval sent to the transaction service." : "Rejection sent to the transaction service.", false);
+    $("approve").disabled = $("reject").disabled = true;
+  } catch (e) { say("Decision not sent: " + e.message); }
+}
+$("approve").onclick = () => decide(true);
+$("reject").onclick = () => decide(false);
+$("end").onclick = async () => {
+  try { await api("POST", `/calls/${S.call.id}/end`); } catch (e) { say("Could not end the call: " + e.message); return; }
+  await cleanup("Call ended. You are available for the next call.");
+};
+// The service ended the call (customer did not reconnect in time, or the room closed).
+async function onEnded(ev) {
+  if (!S.call || S.call.id !== ev.callId) return;
+  try { await api("POST", `/calls/${ev.callId}/end`); } catch (e) { }   // idempotent: makes this teller available again
+  await cleanup("The call was ended by the service (" + ev.reason + "). You are available for the next call.");
+}
+async function cleanup(message) {
+  const r = S.room; S.room = null; if (r) await r.disconnect();
+  document.querySelectorAll("audio").forEach(a => a.remove());
+  clearTimeout(S.joinTimer);
+  for (const id of ["face", "idcam", "scr"]) { $(id).srcObject = null; $(id).parentElement.classList.remove("has"); }
+  $("scrempty").textContent = "Waiting for the kiosk screen";
+  S.mic = S.cam = null; $("self").srcObject = null; $("selfpane").classList.remove("has");
+  $("micbtn").textContent = "Mute mic"; $("cambtn").textContent = "Camera off";
+  S.call = null; setControls(false); banner(""); setState("No active call");
+  $("mirror").className = "masked"; $("mirror").textContent = "No call"; $("snapstatus").textContent = "";
+  say(message, false);
+}
+
+function setControls(on) {
+  $("reject").disabled = $("end").disabled = $("snap").disabled = !on;
+  $("micbtn").disabled = !(on && S.mic); $("cambtn").disabled = !(on && S.cam);
+  checkLimit();
+}
+async function toggle(track, btn, onText, offText, pane) {
+  if (!track) return;
+  const wasMuted = track.isMuted;
+  try { await (wasMuted ? track.unmute() : track.mute()); }
+  catch (e) { say("Could not change that setting: " + e.message); return; }
+  btn.textContent = wasMuted ? onText : offText; btn.setAttribute("aria-pressed", String(!wasMuted));
+  if (pane) pane.classList.toggle("has", wasMuted);
+}
+$("micbtn").onclick = () => toggle(S.mic, $("micbtn"), "Mute mic", "Unmute mic");
+$("cambtn").onclick = () => toggle(S.cam, $("cambtn"), "Camera off", "Camera on", $("selfpane"));
+checkLimit();
+</script>
+</body>
+</html>
