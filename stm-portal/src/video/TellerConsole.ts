@@ -3,6 +3,7 @@ import {
   type LocalAudioTrack, type LocalVideoTrack, type RemoteTrack, type RemoteTrackPublication, type TrackPublication,
 } from "livekit-client";
 import { CallsApi, type AcceptResult, type CancelledEvent, type EndedEvent, type RingEvent } from "../api/calls";
+import { Ringtone } from "./Ringtone";
 
 /**
  * Teller side of a video call, ported from stm-video/teller-console/index.html (same protocol, same timings).
@@ -70,6 +71,7 @@ export class TellerConsole {
   private hbTimer: ReturnType<typeof setInterval> | undefined;
   private ringTimer: ReturnType<typeof setInterval> | undefined;
   private joinTimer: ReturnType<typeof setTimeout> | undefined;
+  private ringtone = new Ringtone();
 
   constructor(tellerId: string, langs: string[]) {
     this.api = new CallsApi(tellerId);
@@ -105,6 +107,7 @@ export class TellerConsole {
   // ------------------------------------------------------------------ availability
   async goAvailable() {
     if (this.state.available || this.state.changingPresence) return;
+    this.ringtone.unlock();                 // called from the click, so the browser lets the ring play later
     this.set({ changingPresence: true, available: true });
     try {
       // Open the event stream FIRST, then announce availability: a call can ring the moment we are available.
@@ -192,6 +195,7 @@ export class TellerConsole {
   private onRing(e: RingEvent) {
     clearInterval(this.ringTimer);
     this.set({ ring: { ...e, left: RING_SECONDS } });
+    this.ringtone.start(`Kiosk ${e.terminalId}${e.lang ? ` (${e.lang.toUpperCase()})` : ""} is calling`);
     this.ringTimer = setInterval(() => {
       const r = this.state.ring;
       if (!r) return clearInterval(this.ringTimer);
@@ -201,6 +205,7 @@ export class TellerConsole {
 
   private hideRing() {
     clearInterval(this.ringTimer);
+    this.ringtone.stop();
     this.set({ ring: null });
   }
 
@@ -398,6 +403,7 @@ export class TellerConsole {
     if (this.state.available) await this.goAway().catch(() => undefined);
     clearInterval(this.hbTimer);
     clearInterval(this.ringTimer);
+    this.ringtone.stop();
     this.streamCtl?.abort();
   }
 }

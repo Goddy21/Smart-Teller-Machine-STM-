@@ -2,6 +2,7 @@
 rem Run ON THE STM. Opens the kiosk test page from the Smart Teller server (HTTPS). Usage:
 rem   open-kiosk-test.cmd SERVER_IP [TERMINAL_ID]
 rem   open-kiosk-test.cmd 10.20.30.40 STM-01
+rem   open-kiosk-test.cmd 10.20.30.40:8443 STM-01     (when the server uses another port)
 rem Run install-server-certificate.ps1 once first, or the browser blocks the cameras.
 if "%~1"=="" ( echo Usage: %~nx0 SERVER_IP [TERMINAL_ID] & exit /b 1 )
 set URL=https://%~1

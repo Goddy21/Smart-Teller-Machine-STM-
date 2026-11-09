@@ -41,3 +41,18 @@ npm run dev
 cd "C:\Goddie\STM Middleware\stm-middleware"
 .\scripts\demo-journey.ps1                    # all flows
 .\scripts\demo-journey.ps1 -Flow Referral     # or just one
+
+
+Server deployment 
+powershell -ExecutionPolicy Bypass -File "C:\Goddie\STM Middleware\deploy\make-server-bundle.ps1"
+
+Then open https://192.168.70.3:8443/ and sign in as admin / aUBqqNieIox2Tpz8
+
+cd /opt/deployments/clients/stm
+tar -xzf /tmp/stm-server.tgz
+grep -c HTTPS_PORT deploy/setup.sh        # should print 2: the new version arrived
+cd deploy
+bash setup.sh 192.168.70.3 8443
+
+firewall-cmd --permanent --add-port=8443/tcp --add-port=7881/tcp --add-port=7882/udp && firewall-cmd --reload
+curl -sk -o /dev/null -w "%{http_code}\n" https://192.168.70.3:8443/       # expect 200

@@ -2,21 +2,28 @@
 # One-time setup on the server. Makes .env (random secrets), a private certificate authority and the server's
 # HTTPS certificate for its IP address, and livekit.yaml. Safe to run again: it keeps an existing .env and CA.
 #   ./setup.sh 10.20.30.40          # the server's IP address on the bank network
+#   ./setup.sh 10.20.30.40 8443     # when another web server (httpd, nginx) already uses port 443
 set -euo pipefail
 cd "$(dirname "$0")"
 
 IP="${1:-}"
+PORT="${2:-443}"
 if [ -z "$IP" ]; then
   IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
   echo "No IP given: using $IP (pass it as the first argument if this is wrong)."
 fi
 [[ "$IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Not an IPv4 address: $IP"; exit 1; }
+[[ "$PORT" =~ ^[0-9]+$ ]] || { echo "Not a port number: $PORT"; exit 1; }
+if [ "$PORT" = "443" ]; then HOSTPORT="$IP"; else HOSTPORT="$IP:$PORT"; fi
 rnd() { openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
+setkv() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >> .env; fi; }
 
 # ---- .env
 if [ ! -f .env ]; then
   cat > .env <<ENV
 SERVER_IP=$IP
+HTTPS_PORT=$PORT
+PUBLIC_HOST=$HOSTPORT
 DB_PASSWORD=$(rnd 32)
 PROVISIONING_SECRET=$(rnd 32)
 PORTAL_API_KEY=$(rnd 32)
@@ -29,8 +36,8 @@ ENV
   chmod 600 .env
   echo "Created .env with new secrets."
 else
-  sed -i "s/^SERVER_IP=.*/SERVER_IP=$IP/" .env
-  echo "Kept the existing .env (SERVER_IP set to $IP)."
+  setkv SERVER_IP "$IP"; setkv HTTPS_PORT "$PORT"; setkv PUBLIC_HOST "$HOSTPORT"
+  echo "Kept the existing .env (address set to https://$HOSTPORT)."
 fi
 set -a; . ./.env; set +a
 
@@ -74,6 +81,7 @@ cat <<DONE
 Next:
   docker compose up -d --build        # first build takes 5-10 minutes
   docker compose ps                   # all services "running"
-Then open https://$IP/ and sign in as admin / $ADMIN_PASSWORD
+Then open https://$HOSTPORT/ and sign in as admin / $ADMIN_PASSWORD
+Firewall: open TCP $PORT and 7881, UDP 7882 to this server.
 Copy deploy/stm/ to each STM and run install-server-certificate.ps1 there (as Administrator).
 DONE

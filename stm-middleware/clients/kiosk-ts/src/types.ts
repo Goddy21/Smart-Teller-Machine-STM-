@@ -33,7 +33,7 @@ export type ErrorCode =
   // onboarding
   | "IDENTITY_MISMATCH" | "BIOMETRIC_NO_MATCH" | "EXISTING_CUSTOMER" | "KRA_PIN_INVALID" | "SCREENING_REFERRED"
   | "CONSENT_REQUIRED" | "TERMS_OUTDATED" | "APPLICATION_EXPIRED" | "OTP_INCORRECT" | "OTP_EXPIRED"
-  | "OTP_TRIES_EXCEEDED" | "RESEND_TOO_SOON"
+  | "OTP_TRIES_EXCEEDED" | "RESEND_TOO_SOON" | "SIM_SWAP_RISK"
   // cards
   | "PIN_INCORRECT" | "PIN_TRIES_EXCEEDED" | "PIN_POLICY" | "PIN_NOT_CONFIRMED" | "CARD_BLOCKED" | "CARD_EXPIRED"
   | "ACCOUNT_NOT_ELIGIBLE"
@@ -183,6 +183,33 @@ export interface KycRequest {
   occupation?: string; sourceOfFunds?: string;
 }
 export interface KycCaptured { applicationId: string; status: ApplicationStatus; screening: { pep: "CLEAR" | "HIT"; sanctions: "CLEAR" | "HIT" } }
+
+/** SIM-swap check of the number a code would go to (the number on record, never one typed at the kiosk). */
+export interface SimSwapCheck {
+  maskedMobile: string;
+  lastSwapAt: Iso | null;          // null: no swap on record
+  hoursSinceSwap: number | null;
+  risk: "LOW" | "HIGH";            // HIGH: swapped within 72 h; B-9 then answers 403 SIM_SWAP_RISK
+  otpAllowed: boolean;
+  checkedAt: Iso;
+}
+
+/** KYC status of an existing customer. flags are reason codes: KYC_REFRESH_DUE, KRA_PIN_MISSING, PEP, HIGH_RISK, SANCTIONS_REVIEW, ADDRESS_UNVERIFIED … */
+export interface KycStatus {
+  customerId: string;
+  status: "CURRENT" | "DUE_SOON" | "REFRESH_DUE";
+  lastReviewedAt: string;          // yyyy-mm-dd
+  nextReviewDue: string;
+  riskRating: "LOW" | "MEDIUM" | "HIGH";
+  kraPinOnFile: boolean;
+  kraPinMasked: string | null;
+  pep: boolean;
+  sanctions: "CLEAR" | (string & {});
+  highRisk: boolean;
+  flags: string[];
+  /** false: send the customer to a teller (refresh due, no KRA PIN, PEP or high risk). */
+  selfServiceAllowed: boolean;
+}
 
 /** B-9 / B-10 */
 export interface OtpSendRequest { purpose: "ONBOARDING_PHONE" | "CARD_SERVICES"; applicationId?: string; lookupRef?: string; mobile?: string; channel?: "SMS" }

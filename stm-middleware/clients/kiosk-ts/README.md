@@ -77,11 +77,21 @@ const dep = await stm.openDeposit({ targetRef: target.targetRef, depositorMobile
 const counted = await stm.depositCounted(dep.depositId, { accepted: [{ denomination: "1000", count: 10 }] });
 await stm.commitDeposit(dep.depositId, counted.total, commitKey);
 
-// any screen: "Talk to a teller"
+// any screen: "Talk to a teller" (or kiosk-video.js in gateway mode with headers: () => stm.authHeaders())
 const call = await stm.requestTeller({ screen: "B6", flow: "ACCOUNT_OPENING", applicationId });
 // poll stm.tellerCall(call.callId) every 2 s; when .media is set, join the LiveKit room (media.roomUrl, media.token)
 
 await stm.endSession("CUSTOMER_FINISHED");   // E13 "Thank you"; do what openItems asks before the next customer
+```
+
+### KYC status and SIM swap (card services)
+
+```ts
+const lk = await stm.lookupCustomer({ by: "ACCOUNT_NUMBER", accountNumber });
+const kyc = await stm.kycStatus(lk.customerId, lk.lookupRef);      // status, riskRating, kraPinOnFile, pep, flags
+if (!kyc.selfServiceAllowed) { /* explain kyc.flags and offer "Talk to a teller" */ }
+const swap = await stm.simSwapCheck({ lookupRef: lk.lookupRef });
+if (!swap.otpAllowed) { /* recent SIM swap: no code can be sent; offer a teller */ }
 ```
 
 ### Idempotency keys
@@ -92,6 +102,9 @@ confirms (`newIdempotencyKey()`), keep it with the step, and pass the same key w
 reload. The gateway answers with the first result instead of doing it twice. If W-2's answer never arrived, call
 `reverseWithdrawalByKey(sameKey)`.
 
+Every other write gets a key automatically, and the client sends it again once with the same key if the network drops
+before the answer arrives, so the gateway replays the first answer instead of acting twice.
+
 ### Errors
 
 Every failure is a `StmApiError` with `status`, `code`, `message` / `messageSw` (show `e.text(lang)` as is),
@@ -101,7 +114,7 @@ Every failure is a `StmApiError` with `status`, `code`, `message` / `messageSw` 
 | `errorScreen` | Codes | Kiosk |
 |---|---|---|
 | `RETRY_STEP` | OTP_INCORRECT, PIN_INCORRECT, PIN_POLICY, KRA_PIN_INVALID, LIMIT_EXCEEDED, INSUFFICIENT_FUNDS, QUOTE_EXPIRED, VALIDATION_ERROR; IDENTITY_MISMATCH / BIOMETRIC_NO_MATCH with attempts left | stay on the screen, "Try again" |
-| `TELLER` | SCREENING_REFERRED, OTP_TRIES_EXCEEDED; no attempts left | offer "Talk to a teller" |
+| `TELLER` | SCREENING_REFERRED, OTP_TRIES_EXCEEDED, SIM_SWAP_RISK; no attempts left | offer "Talk to a teller" |
 | `SERVICE_DOWN` | CORE_UNAVAILABLE, SERVICE_UNAVAILABLE, OUT_OF_SERVICE, VIDEO_UNAVAILABLE, CASSETTE_UNAVAILABLE, NETWORK_ERROR | "Service unavailable", back to A1 |
 | `SESSION` | SESSION_INVALID, DEVICE_UNAUTHORIZED, APPLICATION_EXPIRED | back to A0 |
 | `CARD` | PIN_TRIES_EXCEEDED, CARD_BLOCKED, CARD_EXPIRED | keep or return the card per `details.cardAction` |

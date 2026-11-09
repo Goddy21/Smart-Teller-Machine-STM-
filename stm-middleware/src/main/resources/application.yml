@@ -41,6 +41,10 @@ stm:
     inactivity-timeout-sec: 60      # told to the kiosk in D-2: its own "are you still there?" countdown
   call-control:
     url: ${CALL_CONTROL_URL:http://localhost:8090}   # stm-video call-control, for "Talk to a teller" (D-8)
+  kyc:
+    sim-swap-block-hours: 72        # no OTP to a number whose SIM was swapped within this many hours (403 SIM_SWAP_RISK)
+    review-years: { low: 3, medium: 2, high: 1 }   # KYC refresh cycle by risk rating
+    due-soon-days: 30               # status DUE_SOON this many days before the review date
   cash:
     retract-credit: IMMEDIATE       # IMMEDIATE: W-4 reverses at once. AFTER_COUNT: PENDING_RECONCILIATION until the retract bin is counted
   receipt:

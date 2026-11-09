@@ -5,7 +5,7 @@ import type {
   DepositOpened, DepositTarget, DepositTargetRequest, DeviceStatus, DeviceToken, Dispensed, DispenseRequest,
   DocumentVerified, DocumentVerifyRequest, EndReason, ErrorCode, FeeQuote, FeeQuoteRequest, FxConfirmed, FxCounted,
   FxCountRequest, FxExchangeOpened, FxExchangeRequest, FxQuote, FxQuoteRequest, FxRates, HealthAccepted, HealthReport,
-  JournalUpload, KraResult, KycCaptured, KycRequest, Lang, LookupRequest, LookupResult, Money, Note, OtpSendRequest,
+  JournalUpload, KraResult, KycStatus, SimSwapCheck, KycCaptured, KycRequest, Lang, LookupRequest, LookupResult, Money, Note, OtpSendRequest,
   OpenDepositRequest, OtpSent, OtpVerified, PinSetRequest, PinVerified, PinVerifyRequest, PrintStep, Product, Receipt, ReceiptRequest,
   ReceiptStatus, Reconciliation, Reversal, ReverseRequest, SessionEnded, SessionStarted, SignatureRequest, SmsQueued,
   SmsRequest, StartApplicationRequest, StartSessionRequest, Statement, StatementOption, StatementRequest,
@@ -76,7 +76,7 @@ export function errorScreen(e: unknown): ErrorScreen {
       return "RETRY_STEP";
     case "IDENTITY_MISMATCH": case "BIOMETRIC_NO_MATCH":
       return (e.details.attemptsLeft as number | undefined) === 0 ? "TELLER" : "RETRY_STEP";
-    case "SCREENING_REFERRED": case "OTP_TRIES_EXCEEDED":
+    case "SCREENING_REFERRED": case "OTP_TRIES_EXCEEDED": case "SIM_SWAP_RISK":
       return "TELLER";
     case "CORE_UNAVAILABLE": case "SERVICE_UNAVAILABLE": case "OUT_OF_SERVICE": case "VIDEO_UNAVAILABLE":
     case "CASSETTE_UNAVAILABLE": case "NETWORK_ERROR":
@@ -109,7 +109,8 @@ export const newIdempotencyKey = () => crypto.randomUUID();
  *
  * Calls that move money, issue a card or charge a fee take an idempotencyKey. Create it when the customer confirms
  * (newIdempotencyKey()) and reuse it for retries of that same step; the gateway then answers with the first result
- * (header Idempotent-Replayed) instead of doing it twice.
+ * (header Idempotent-Replayed) instead of doing it twice. Every other write gets a key automatically, and is retried
+ * once with the same key if the network drops before the answer arrives.
  */
 export class StmClient {
   private readonly base: string;
@@ -134,6 +135,9 @@ export class StmClient {
   }
 
   get deviceId() { return this.opts.deviceId; }
+
+  /** Headers for calls made outside this client, e.g. kiosk-video.js in gateway mode (D-8 / D-9). */
+  authHeaders(): Record<string, string> { return this.headers(); }
   get origin() { return this.base.slice(0, -"/stm/v1".length); }
 
   // ================================================================== D: device and session
@@ -270,6 +274,12 @@ export class StmClient {
 
   /** C-1. Card services without a card: account number or ID, then OTP (B-9 purpose CARD_SERVICES) and B-5. */
   lookupCustomer(r: LookupRequest) { return this.call<LookupResult>("POST", "/customers/lookup", r); }
+  /** SIM-swap risk of the customer's registered number (lookupRef) or the new customer's number (applicationId). Call before B-9. */
+  simSwapCheck(r: { lookupRef: string } | { applicationId: string }) { return this.call<SimSwapCheck>("POST", "/kyc/sim-swap-check", r); }
+  /** KYC status: with the customer token, or with the lookupRef from C-1 before the OTP. */
+  kycStatus(customerId: string, lookupRef?: string) {
+    return this.call<KycStatus>("GET", `/customers/${customerId}/kyc-status`, undefined, { query: { lookupRef }, customer: !lookupRef });
+  }
   /** C-2 */
   cards(customerId: string) { return this.call<{ cards: CardView[] }>("GET", `/customers/${customerId}/cards`, undefined, { customer: true }).then((r) => r.cards); }
   /** C-3. eligible and reason are set because the gateway is asked for card eligibility. */
@@ -409,9 +419,14 @@ export class StmClient {
     const qs = o.query ? Object.entries(o.query).filter(([, v]) => v !== undefined && v !== "")
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("&") : "";
     const url = path + (qs ? `?${qs}` : "");
+    if (method !== "GET" && !o.idem && path !== "/auth/device/token") o = { ...o, idem: newIdempotencyKey() };
     try {
       return await this.raw<T>(method, url, body, this.headers(o));
     } catch (e) {
+      // The answer was lost: send the same request with the same key; the gateway replays it if it already ran.
+      if (e instanceof StmApiError && e.code === "NETWORK_ERROR" && method !== "GET") {
+        return this.raw<T>(method, url, body, this.headers(o));
+      }
       // The device token may have been revoked or expired early: sign in once more and repeat.
       if (e instanceof StmApiError && e.code === "DEVICE_UNAUTHORIZED") {
         await this.signIn();

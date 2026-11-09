@@ -17,7 +17,10 @@ Redis. Staff and STMs reach it at one HTTPS address, `https://<server IP>`. Your
 - Docker Engine with the compose plugin (`docker compose version` works), and internet access to Docker Hub,
   Maven Central and npm for the first build.
 - A fixed IP address on the bank network, reachable from the STMs and staff PCs.
-- Firewall open from the bank network to the server: **TCP 80, 443, 7881** and **UDP 7882**. Nothing else.
+- Firewall open from the bank network to the server: **TCP 443 (or the port you choose), 7881** and **UDP 7882**. Nothing else.
+- **Port 443 already used** by another web server (httpd, nginx)? Give `setup.sh` another port, for example
+  `bash setup.sh 192.168.70.3 8443`. Everything then lives at `https://192.168.70.3:8443`, and every address below
+  gets `:8443` after the IP.
 
 ## 1. Pack the code on your laptop
 
@@ -36,7 +39,7 @@ scp "C:\Goddie\STM Middleware\stm-server.tgz" youruser@SERVER_IP:/tmp/
 sudo mkdir -p /opt/stm && sudo chown $USER /opt/stm
 tar -xzf /tmp/stm-server.tgz -C /opt/stm
 cd /opt/stm/deploy
-bash setup.sh 10.20.30.40          # your server's IP
+bash setup.sh 10.20.30.40          # your server's IP (add a port, e.g. 8443, if 443 is taken)
 ```
 `setup.sh` creates:
 - `.env`: random passwords and keys, plus the first `admin` password. It is printed at the end; keep it safe.
@@ -44,7 +47,7 @@ bash setup.sh 10.20.30.40          # your server's IP
   for the STMs and staff PCs.
 - `livekit.yaml`: the video server's settings.
 
-Run it again if the IP changes. It keeps the existing passwords and CA and makes a new certificate.
+Run it again if the IP or port changes, then `docker compose up -d`. It keeps the existing passwords and CA and makes a new certificate.
 
 ## 3. Build and start
 
@@ -70,7 +73,7 @@ Group Policy can push `stm-server-ca.crt` to every PC.
 
 Then, on the STM:
 ```
-.\open-kiosk-test.cmd 10.20.30.40 STM-01
+.\open-kiosk-test.cmd 10.20.30.40 STM-01                  # with a port: 10.20.30.40:8443
 .\list-screens.ps1
 .\open-teller-display.cmd 10.20.30.40 STM-01 1280 0
 ```
@@ -127,6 +130,9 @@ This is a **pilot** setup on the bank network. Before real customers and money:
 - **No call recording.** Egress and MinIO are not deployed, so `RECORDING_ENABLED=false`.
 - **The shared portal key is off** (`ALLOW_PORTAL_KEY=false`). `demo-journey.ps1` and the Postman portal requests
   need it; set it to `true` in `.env` and run `docker compose up -d` if you want them against this server.
+- **Kiosk app on its own address:** if the kiosk app is served from somewhere other than this server (for
+  example `http://localhost:5173` during development), add that origin to `.env` as
+  `EXTRA_CORS_ORIGINS=http://localhost:5173` (comma-separated) and run `docker compose up -d`.
 - **Fonts:** the portal loads its fonts from Google Fonts. PCs without internet show a standard font instead.
 
 ## Troubleshooting

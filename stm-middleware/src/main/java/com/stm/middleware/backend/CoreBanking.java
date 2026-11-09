@@ -29,6 +29,9 @@ public interface CoreBanking {
         }
     }
 
+    /** The customer's KYC record as core banking holds it (for refresh and risk decisions). */
+    record KycProfile(OffsetDateTime lastReviewedAt, String riskRating, boolean pep, String sanctions, List<String> flags) {}
+
     record NewCustomer(String idNumber, String fullName, String firstName, String mobile, String kraPin, String addressJson) {}
 
     record Opened(String customerId, Account account) {}
@@ -40,6 +43,9 @@ public interface CoreBanking {
     Optional<Customer> customer(String customerId);
 
     Optional<Customer> customerByIdNumber(String idNumber);
+
+    /** KYC review date, risk rating (LOW, MEDIUM, HIGH), PEP and sanctions status, other flags. */
+    KycProfile kycProfile(String customerId);
 
     Optional<Account> account(String accountId);
 

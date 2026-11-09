@@ -1,4 +1,4 @@
-# One HTTPS address for everything: https://${SERVER_IP}
+# One HTTPS address for everything: https://${PUBLIC_HOST}
 #   /                  STM portal (staff)
 #   /api/v1/, /stm/v1/ STM middleware (portal API, Smart Teller Gateway)
 #   /ws/               middleware signaling WebSocket (remote LOCK/UNLOCK/REBOOT)
@@ -7,12 +7,6 @@
 #   /livekit/          LiveKit signaling (WebSocket); media itself uses 7881/tcp and 7882/udp directly
 
 map $http_upgrade $connection_upgrade { default upgrade; '' close; }
-
-server {
-    listen 80;
-    server_name _;
-    return 301 https://$host$request_uri;
-}
 
 server {
     listen 443 ssl;
@@ -27,7 +21,8 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy same-origin always;
 
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;                 # keeps the port (e.g. :8443) for redirects
+    proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
@@ -61,7 +56,7 @@ server {
     location /teller/ { proxy_pass http://call-control:8080; }
     location /vendor/ { proxy_pass http://call-control:8080; }
 
-    # ---- LiveKit signaling (the SDK connects to wss://${SERVER_IP}/livekit/rtc)
+    # ---- LiveKit signaling (the SDK connects to wss://${PUBLIC_HOST}/livekit/rtc)
     location /livekit/ {
         proxy_pass http://livekit:7880/;
         proxy_set_header Upgrade $http_upgrade;

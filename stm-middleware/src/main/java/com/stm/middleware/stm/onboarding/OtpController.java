@@ -36,9 +36,11 @@ public class OtpController {
     private final SmsService sms;
     private final StmAudit audit;
     private final ObjectProvider<SimControl> sim;
+    private final KycChecks kyc;
 
     public OtpController(JdbcClient jdbc, Applications applications, CoreBanking core, SmsService sms, StmAudit audit,
-                         ObjectProvider<SimControl> sim) {
+                         ObjectProvider<SimControl> sim, KycChecks kyc) {
+        this.kyc = kyc;
         this.jdbc = jdbc;
         this.applications = applications;
         this.core = core;
@@ -53,7 +55,7 @@ public class OtpController {
 
     @PostMapping("/send")
     @ResponseStatus(HttpStatus.CREATED)
-    @Transactional
+    @Transactional(noRollbackFor = StmException.class)   // keeps the audit of a blocked send
     public Map<String, Object> send(Ctx ctx, @Valid @RequestBody SendRequest req) {
         String subject;
         String mobile;
@@ -76,6 +78,13 @@ public class OtpController {
             // Always the phone registered in core, never one typed at the kiosk.
             mobile = core.customer(customerId).map(CoreBanking.Customer::mobile)
                     .orElseThrow(() -> Errors.notFound("CUSTOMER_NOT_FOUND", "Customer not found", "Mteja hakupatikana"));
+        }
+        // Never text a code to a SIM that was just swapped (403 SIM_SWAP_RISK): the kiosk offers a teller instead.
+        try {
+            kyc.requireNoRecentSwap(mobile);
+        } catch (StmException e) {
+            audit.session(ctx, "OTP_BLOCKED_SIM_SWAP", "purpose", req.purpose(), "subject", subject, "mobile", SmsService.mask(mobile));
+            throw e;
         }
         record Last(OffsetDateTime sentAt, int sends) {}
         Optional<Last> last = jdbc.sql("""

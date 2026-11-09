@@ -32,7 +32,7 @@ Content-Type: application/json
 | `Accept-Language` | `en` or `sw` (the customer's choice; error messages follow it) |
 | `X-Session-Id` | the `sessionId` from D-2, from the start of the session to its end |
 | `X-Customer-Token` | only after B-12, for the card steps |
-| `Idempotency-Key` | only on B-12 and C-5: a UUID made when the customer confirms, **reused unchanged if you retry** |
+| `Idempotency-Key` | **required** on B-12 and C-5; accepted on every other write. A UUID made when the customer confirms, **reused unchanged if you retry** |
 
 ## 2. The happy path, screen by screen
 
@@ -165,6 +165,9 @@ POST /stm/v1/otp/send
 201 { "otpRef": "otp_KFH22DMP4E28", "maskedMobile": "+254 7•• ••• 678", "length": 6, "expiresInSec": 300, "resendAfterSec": 60 }
 ```
 Show `maskedMobile`, draw `length` boxes and enable "Resend" after `resendAfterSec`. Resend is the same call again.
+The gateway refuses to text a code to a number whose SIM was swapped in the last 72 hours (403 `SIM_SWAP_RISK`).
+To know before the customer reaches B7, call `POST /stm/v1/kyc/sim-swap-check` `{ "applicationId": "app_…" }`
+after B6: `otpAllowed: false` means offer "Talk to a teller".
 ```http
 POST /stm/v1/otp/verify
 { "otpRef": "otp_KFH22DMP4E28", "code": "123456" }
@@ -295,6 +298,7 @@ Every error has the same shape. Show `message` (or `messageSw` in Kiswahili) to 
 | B7 | 401 `OTP_INCORRECT`, `details.attemptsLeft` | Clear the boxes and try again. |
 | B7 | 401 `OTP_EXPIRED` | Send a new code (B-9). |
 | B7 | 403 `OTP_TRIES_EXCEEDED` | Too many wrong codes. Offer "Talk to a teller" or cancel. |
+| B7 | 403 `SIM_SWAP_RISK` | The phone's SIM was swapped recently. No code is sent. Show the message and offer "Talk to a teller". |
 | B7 | 403 `SCREENING_REFERRED` | You skipped the referral. Go back to the waiting screen. |
 | B9 | 503 `CORE_UNAVAILABLE`, or no answer | Retry B-12 with the **same** Idempotency-Key. The account is never opened twice. |
 | B10 | 422 `PIN_POLICY` | The PIN is too easy (for example 1234 or 1111). Ask for another. |

@@ -67,6 +67,25 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
     }
 
     @Override
+    public KycProfile kycProfile(String customerId) {
+        control.core();
+        return jdbc.sql("SELECT kyc_reviewed_at, risk_rating, pep, kyc_flags FROM sim_customers WHERE id = :id")
+                .param("id", customerId)
+                .query((rs, n) -> new KycProfile(rs.getObject(1, OffsetDateTime.class), rs.getString(2), rs.getBoolean(3),
+                        "CLEAR", parseFlags(rs.getString(4))))
+                .optional()
+                .orElseThrow(() -> Errors.notFound("CUSTOMER_NOT_FOUND", "Customer not found", "Mteja hakupatikana"));
+    }
+
+    /** kyc_flags holds a JSON array of plain codes, e.g. ["ADDRESS_UNVERIFIED"]. */
+    private static List<String> parseFlags(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        String inner = json.trim().replaceAll("^\\[|]$", "").trim();
+        if (inner.isEmpty()) return List.of();
+        return java.util.Arrays.stream(inner.split(",")).map(x -> x.trim().replace("\"", "")).filter(x -> !x.isEmpty()).toList();
+    }
+
+    @Override
     public Optional<Customer> customerByIdNumber(String idNumber) {
         control.core();
         return jdbc.sql("SELECT * FROM sim_customers WHERE id_number = :n").param("n", idNumber).query(CUSTOMER).optional();

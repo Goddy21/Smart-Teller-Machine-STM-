@@ -16,7 +16,7 @@ Postman: import `docs/STM-Gateway.postman_collection.json` (run folder 0 · Setu
 | `Accept-Language` | always | `en` or `sw`: messages, product names, receipts |
 | `X-Session-Id` | from D-2 to D-4 | the `sessionId` from D-2 |
 | `X-Customer-Token` | the customer's own accounts and cards | from S-2, B-5 (card services) or B-12 |
-| `Idempotency-Key` | B-12, C-5, S-5, K-4, W-2, W-4, X-5 | a UUID made when the customer confirms; reuse it when retrying. Same key + same body replays the first answer (header `Idempotent-Replayed: true`); same key + another body is 409 `IDEMPOTENCY_CONFLICT` |
+| `Idempotency-Key` | **required** on B-12, C-5, S-5, K-4, W-2, W-4, X-5; **accepted on every other write** (POST, PUT, PATCH, DELETE) | a UUID made when the customer confirms; reuse it when retrying. Same key + same body replays the first answer (header `Idempotent-Replayed: true`), including a business error; same key + another body is 409 `IDEMPOTENCY_CONFLICT`; server errors are not stored, so a retry runs again |
 
 Each endpoint below says which of the last three it needs.
 
@@ -58,7 +58,7 @@ Show `message` / `messageSw` to the customer as is. Common codes: `VALIDATION_ER
 | Journey | Calls |
 |---|---|
 | Open an account | D-2 → B-1 → B-2 → B-3 → B-4 → B-5 → B-6 → B-7 → B-8 → B-9 → B-10 → B-11 → B-12 → C-5 (applicationId) → C-6 … → C-7 → C-8 → C-9 → R-1 → D-4 |
-| Card services, no card | D-2 → C-1 → B-9 (CARD_SERVICES) → B-10 → B-5 (customerId + lookupRef) → C-2 → C-3 → C-4 → C-5 → C-6 … → C-7 → C-8 → C-9 → D-4 |
+| Card services, no card | D-2 → C-1 → KYC status → SIM-swap check → B-9 (CARD_SERVICES) → B-10 → B-5 (customerId + lookupRef) → C-2 → C-3 → C-4 → C-5 → C-6 … → C-7 → C-8 → C-9 → D-4 |
 | Withdrawal | D-2 (CARD) → S-1 → S-2 → S-3 → W-1 → W-2 → dispense → W-3 (or W-4) → R-1 → D-4 |
 | Deposit | D-2 → K-1 → K-2 → K-3 → K-4 (or K-5) → R-1 → D-4 |
 | Forex, bank buys | D-2 → X-1 → B-4 (FOREX) → X-2 → X-3 → X-4 → X-5 → W-3 → D-4 |
@@ -567,7 +567,7 @@ Response `200`:
 
 `POST /stm/v1/otp/send`  ·  needs `X-Session-Id`
 
-`purpose`: ONBOARDING_PHONE (with applicationId) or CARD_SERVICES (with lookupRef). 403 SCREENING_REFERRED, 429 RESEND_TOO_SOON (60 s). Demo code: 123456.
+`purpose`: ONBOARDING_PHONE (with applicationId) or CARD_SERVICES (with lookupRef). 403 SCREENING_REFERRED, 403 SIM_SWAP_RISK (the SIM was swapped within 72 h), 429 RESEND_TOO_SOON (60 s). Demo code: 123456.
 
 Request:
 ```json
@@ -795,6 +795,56 @@ Response `200`:
   "verificationRequired": [
     "OTP"
   ]
+}
+```
+### — · SIM-swap check
+
+`POST /stm/v1/kyc/sim-swap-check`  ·  needs `X-Session-Id`
+
+Checks the number on record: core banking's for a lookup, the B-8 number for an application. Call it before B-9. `risk: HIGH` (swap within 72 h, `stm.kyc.sim-swap-block-hours`) means B-9 will refuse with 403 `SIM_SWAP_RISK` (`details.offerTeller: true`): send the customer to a teller. Or `{"applicationId": "app_…"}`.
+
+Request:
+```json
+{
+  "lookupRef": "lk_ZWTJ2ZTVKR3V"
+}
+```
+Response `200`:
+```json
+{
+  "maskedMobile": "+254 7•• ••• 654",
+  "lastSwapAt": "2026-11-08T16:43:00Z",
+  "hoursSinceSwap": 20,
+  "risk": "HIGH",
+  "otpAllowed": false,
+  "checkedAt": "2026-11-09T15:43:35+03:00"
+}
+```
+### — · KYC status
+
+`GET /stm/v1/customers/{customerId}/kyc-status?lookupRef=lk_…`  ·  needs `X-Session-Id`
+
+With the customer token, or with the `lookupRef` from C-1 in this session (before the OTP). `status`: CURRENT, DUE_SOON (within 30 days) or REFRESH_DUE. Review cycle by risk rating: LOW 3 years, MEDIUM 2, HIGH 1. `flags` are reason codes (KYC_REFRESH_DUE, KRA_PIN_MISSING, PEP, HIGH_RISK, SANCTIONS_REVIEW, plus core flags such as ADDRESS_UNVERIFIED). `selfServiceAllowed: false` means send the customer to a teller.
+
+Response `200`:
+```json
+{
+  "customerId": "CIF00391144",
+  "status": "REFRESH_DUE",
+  "lastReviewedAt": "2023-09-09",
+  "nextReviewDue": "2025-09-09",
+  "riskRating": "MEDIUM",
+  "kraPinOnFile": false,
+  "kraPinMasked": null,
+  "pep": false,
+  "sanctions": "CLEAR",
+  "highRisk": false,
+  "flags": [
+    "KYC_REFRESH_DUE",
+    "KRA_PIN_MISSING",
+    "ADDRESS_UNVERIFIED"
+  ],
+  "selfServiceAllowed": false
 }
 ```
 ### C-2 · Customer's cards

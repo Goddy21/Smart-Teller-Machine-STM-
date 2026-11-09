@@ -29,7 +29,7 @@ the gateway and simulator tables. Never edit a migration that has run; add `V5__
 | `X-Request-Id` | a UUID per call; echoed in errors and the audit journal |
 | `Accept-Language` | `en` or `sw`: error messages and receipts follow it (errors also carry `messageSw`) |
 | `X-Customer-Token` | after S-2 (card + PIN), B-5 (card services) or B-12 (new account); needed for the customer's accounts and cards |
-| `Idempotency-Key` | required on B-12, C-5, S-5, K-4, W-2, W-4, X-5. Same key + same body replays the first answer (`Idempotent-Replayed: true`); same key + other body is 409 `IDEMPOTENCY_CONFLICT` |
+| `Idempotency-Key` | required on B-12, C-5, S-5, K-4, W-2, W-4, X-5, and accepted on every other write. Same key + same body replays the first answer (`Idempotent-Replayed: true`); same key + other body is 409 `IDEMPOTENCY_CONFLICT` |
 
 Money is `{"amount": "12000.00", "currency": "KES"}` (decimal strings). Errors are
 `{"error": {code, message, messageSw, retryable, requestId, details}}`.
@@ -50,7 +50,7 @@ Money is `{"amount": "12000.00", "currency": "KES"}` (decimal strings). Errors a
 | B8 Signature | B-11 `POST /onboarding/applications/{id}/signature` |
 | B9 Account created | B-12 `POST /onboarding/applications/{id}/submit` (opens the account), then C-5 with `applicationId` (fee waived), C-6, C-7 |
 | B10 PIN | C-8 `POST /cards/{id}/pin`, C-9 `POST /cards/{id}/activate`, R-1 receipt |
-| C1–C3 Card services | C-1 `POST /customers/lookup`, B-9/B-10 (purpose `CARD_SERVICES`), B-5 with `customerId` + `lookupRef` → customer token; C-2 cards |
+| C1–C3 Card services | C-1 `POST /customers/lookup`, `GET /customers/{id}/kyc-status?lookupRef=` (refresh due, KRA PIN, PEP / high risk), `POST /kyc/sim-swap-check`, B-9/B-10 (purpose `CARD_SERVICES`; 403 `SIM_SWAP_RISK` after a swap within 72 h), B-5 with `customerId` + `lookupRef` → customer token; C-2 cards |
 | C4 Account & fee | C-3 `GET /customers/{id}/accounts?eligibleFor=CARD`, C-4 `POST /fees/quote` |
 | C5 Printing | C-5 `POST /cards/orders`, C-6 `GET /cards/orders/{id}` (steps), C-7 `POST /cards/orders/{id}/dispense`; C-10 block a lost card |
 | C6 PIN activation | C-8, C-9 |
@@ -74,7 +74,7 @@ forex 50 notes and USD/EUR/GBP 1,000 a day; cash-out of forex rounded down to KE
 | 30333444 | Otieno Peter Ouma | KRA PIN inactive (`KRA_PIN_INVALID`) |
 | 30444555 | Faith Atieno Odhiambo | document tamper check fails |
 | 32145678 | Achieng Wanjiru Otieno, CIF00482913 | existing customer: card `tok_4512xxxx4521` PIN **2580**; savings 0123454521, current 0123457780 (no card yet), junior saver |
-| 27654321 | Brian Kiprotich Mutai, CIF00391144 | blocked card 6611 and expired card 7002 (PIN 1357) |
+| 27654321 | Brian Kiprotich Mutai, CIF00391144 (account 0119876543) | blocked card 6611 and expired card 7002 (PIN 1357); SIM swapped 20 hours ago (no OTP); KYC review overdue, no KRA PIN on file |
 | P12345678 (GBR) | John Robert Smith | visitor passport for forex |
 
 Every OTP is `123456` (`stm.sim.fixed-otp`). PIN blocks in the demo are clear ISO 9564 fields: `0` + length + PIN,
@@ -125,6 +125,8 @@ call-control is down.
   with `stm.cash.retract-credit: AFTER_COUNT`).
 - PINs: only PIN blocks pass through; never stored, logged or audited. OTPs are masked in the SMS outbox.
 - Audit journal is hash-chained with masked identifiers; the kiosk journal (A-1) is HMAC-signed per batch.
+- No one-time code goes to a number whose SIM was swapped in the last 72 h (`stm.kyc.sim-swap-block-hours`); the
+  `Telco` port checks it (simulated by `sim_sim_swaps`).
 - Sessions expire after 10 min idle; D-4 lists open items (escrowed notes, a card in the printer) the kiosk must finish.
 
 ## Not done yet
