@@ -1,0 +1,4 @@
+.env
+certs/
+livekit.yaml
+stm/stm-server-ca.crt

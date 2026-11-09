@@ -45,6 +45,7 @@ public class CallController {
   Map<String, Object> status(@PathVariable String id, @RequestHeader("X-Terminal-Id") String terminal) {
     var c = svc.get(id);
     if (c == null || !c.terminalId.equals(terminal)) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND);
+    svc.touch(id);   // the customer is still waiting at the kiosk
     return Map.of("callId", c.id, "state", c.state, "txId", c.txId == null ? "" : c.txId, "createdAt", c.createdAt);
   }
   @GetMapping(path = "/api/calls/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

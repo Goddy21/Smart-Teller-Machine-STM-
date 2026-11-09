@@ -1,0 +1,97 @@
+# Smart Teller platform on one Linux server: middleware, portal, video (call-control + LiveKit), PostgreSQL, Redis.
+# Run ./setup.sh once (makes .env, the TLS certificate and livekit.yaml), then:  docker compose up -d --build
+# Only nginx (443, 80) and LiveKit media (7881/tcp, 7882/udp) are reachable from the network.
+name: stm
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: stm
+      POSTGRES_USER: stm
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro      # creates the callcontrol database on first start
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stm -d stm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+
+  middleware:
+    build:
+      context: ../stm-middleware
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      SPRING_PROFILES_ACTIVE: demo                  # simulated bank systems until the real adapters exist
+      DB_URL: jdbc:postgresql://postgres:5432/stm
+      DB_USER: stm
+      DB_PASSWORD: ${DB_PASSWORD}
+      PROVISIONING_SECRET: ${PROVISIONING_SECRET}
+      PORTAL_API_KEY: ${PORTAL_API_KEY}
+      BOOTSTRAP_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      CORS_ALLOWED_ORIGINS: https://${SERVER_IP}
+      CALL_CONTROL_URL: http://call-control:8080
+      STM_PORTALAUTH_ALLOWSHAREDKEY: ${ALLOW_PORTAL_KEY:-false}   # true only while scripts still use X-Portal-Key
+      STM_ALLOWTELLERKEYINQUERY: "false"
+      SERVER_FORWARDHEADERSSTRATEGY: framework
+      JAVA_TOOL_OPTIONS: -Duser.timezone=Africa/Nairobi
+      TZ: Africa/Nairobi
+
+  call-control:
+    build:
+      context: "../Video Conferencing/stm-video"
+      dockerfile: ../../deploy/call-control.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+    environment:
+      SPRING_PROFILES_ACTIVE: dev                   # identities from cookies (kiosk test page, upper display, portal); see README
+      DB_URL: jdbc:postgresql://postgres:5432/callcontrol
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      LIVEKIT_APIKEY: stmkey
+      LIVEKIT_APISECRET: ${LIVEKIT_SECRET}
+      LIVEKIT_PUBLIC_URL: wss://${SERVER_IP}/livekit
+      LIVEKIT_API_URL: http://livekit:7880
+      RECORDING_ENABLED: "false"                    # no Egress/MinIO on this server
+      TZ: Africa/Nairobi
+
+  livekit:
+    image: livekit/livekit-server:v1.9.1
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes: ["./livekit.yaml:/etc/livekit.yaml:ro"]
+    ports:
+      - "7881:7881/tcp"     # media over TCP (fallback)
+      - "7882:7882/udp"     # media over UDP (all calls share this one port)
+
+  web:
+    build:
+      context: ../stm-portal
+      dockerfile: ../deploy/web.Dockerfile
+    restart: unless-stopped
+    depends_on: [middleware, call-control, livekit]
+    environment:
+      SERVER_IP: ${SERVER_IP}
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./certs:/etc/nginx/certs:ro
+    ports:
+      - "443:443"
+      - "80:80"
+
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,82 @@
+# One HTTPS address for everything: https://${SERVER_IP}
+#   /                  STM portal (staff)
+#   /api/v1/, /stm/v1/ STM middleware (portal API, Smart Teller Gateway)
+#   /ws/               middleware signaling WebSocket (remote LOCK/UNLOCK/REBOOT)
+#   /api/              call-control (teller presence, rings, calls)
+#   /kiosk/, /teller/, /vendor/   pages served by call-control (kiosk test page, upper-screen display)
+#   /livekit/          LiveKit signaling (WebSocket); media itself uses 7881/tcp and 7882/udp directly
+
+map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+
+server {
+    listen 80;
+    server_name _;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /etc/nginx/certs/server.crt;
+    ssl_certificate_key /etc/nginx/certs/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    client_max_body_size 10m;          # ID images and signatures are sent as base64
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy same-origin always;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+
+    # ---- STM middleware
+    location /api/v1/ {
+        proxy_pass http://middleware:8080;
+        proxy_buffering off;                       # /api/v1/portal/telemetry/stream is server-sent events
+        proxy_read_timeout 1h;
+    }
+    location /stm/v1/ { proxy_pass http://middleware:8080; proxy_read_timeout 120s; }
+    location /ws/ {
+        proxy_pass http://middleware:8080;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 1h;
+    }
+    location = /swagger-ui.html { proxy_pass http://middleware:8080; }
+    location /swagger-ui/ { proxy_pass http://middleware:8080; }
+    location /v3/api-docs { proxy_pass http://middleware:8080; }
+
+    # ---- call-control (calls, rings and display events are server-sent events: no buffering, long reads)
+    location /api/ {
+        proxy_pass http://call-control:8080;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+    }
+    location /kiosk/  { proxy_pass http://call-control:8080; }
+    location /teller/ { proxy_pass http://call-control:8080; }
+    location /vendor/ { proxy_pass http://call-control:8080; }
+
+    # ---- LiveKit signaling (the SDK connects to wss://${SERVER_IP}/livekit/rtc)
+    location /livekit/ {
+        proxy_pass http://livekit:7880/;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 1h;
+    }
+
+    # ---- portal (single-page app)
+    location / {
+        root /usr/share/nginx/html;
+        try_files $uri $uri/ /index.html;
+    }
+    location /assets/ {
+        root /usr/share/nginx/html;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}

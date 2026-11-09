@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Teller Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&family=Red+Hat+Display:wght@600;800;900&display=swap">
+<style>
+/* Layout: one reading column (~70ch) with full-width diagram panels; Blue River tokens from the Smart Teller prototype. */
+:root {
+  --bg: #EEF0F8; --surface: #FFFFFF; --surface-2: #F4F5FB; --ink: #121426; --ink-2: #2E3250; --muted: #4E5370;
+  --line: #D6D9EA; --accent: #1C24AA; --accent-soft: #E2E4F8; --red: #D3141C; --red-soft: #FDE3E4;
+  --event: #6B7092; --good: #0C7A4E; --good-soft: #DAF2E6; --hero-1: #0D1270; --hero-2: #1C24AA; --hero-ink: #FFFFFF;
+  --f-disp: "Red Hat Display", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #07081C; --surface: #11142F; --surface-2: #171B3D; --ink: #ECEEFB; --ink-2: #C9CDE8; --muted: #A3A8C8;
+    --line: #2A2F5A; --accent: #8F97FF; --accent-soft: #1E2361; --red: #FF5A61; --red-soft: #3D1218;
+    --event: #9AA0C4; --good: #45D196; --good-soft: #0E3226; --hero-1: #05072E; --hero-2: #141B86; --hero-ink: #FFFFFF;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #07081C; --surface: #11142F; --surface-2: #171B3D; --ink: #ECEEFB; --ink-2: #C9CDE8; --muted: #A3A8C8;
+  --line: #2A2F5A; --accent: #8F97FF; --accent-soft: #1E2361; --red: #FF5A61; --red-soft: #3D1218;
+  --event: #9AA0C4; --good: #45D196; --good-soft: #0E3226; --hero-1: #05072E; --hero-2: #141B86; --hero-ink: #FFFFFF;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 17px/1.6 var(--f-body); }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 0 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header.top { background: linear-gradient(150deg, var(--hero-2), var(--hero-1)); color: var(--hero-ink); }
+header.top .wrap { padding-block: 40px 36px; }
+.eyebrow { font: 700 12px/1 var(--f-body); letter-spacing: .14em; text-transform: uppercase; opacity: .85; }
+h1 { font: 900 clamp(32px, 5vw, 52px)/1.04 var(--f-disp); letter-spacing: -.025em; margin: 10px 0 12px; text-wrap: balance; }
+h1 em { font-style: normal; color: #FF8A8F; }
+header.top p { max-width: 66ch; margin: 0; opacity: .92; }
+h2 { font: 800 28px/1.15 var(--f-disp); letter-spacing: -.015em; margin: 56px 0 10px; text-wrap: balance; }
+h3 { font: 800 19px/1.25 var(--f-disp); margin: 0 0 6px; }
+p, li { max-width: 70ch; }
+.lede { color: var(--ink-2); }
+code, .mono { font: 500 .86em var(--f-mono); }
+code { background: var(--accent-soft); color: var(--ink); padding: 1px 6px; border-radius: 6px; }
+.panel { background: var(--surface); border-radius: 22px; padding: 18px; margin-top: 18px; box-shadow: 0 1px 2px rgba(18,20,38,.06); }
+.scroll { overflow-x: auto; }
+.scroll svg { display: block; min-width: 980px; width: 100%; height: auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 4px 4px 12px; font-size: 14px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.legend i { display: inline-block; width: 34px; height: 0; border-top: 3px solid var(--accent); }
+.legend i.media { border-top: 3px dashed var(--red); }
+.legend i.event { border-top: 2px dotted var(--event); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 18px; }
+.part { background: var(--surface); border-radius: 18px; padding: 18px 20px; min-width: 0; }
+.part p { margin: 0 0 8px; color: var(--ink-2); font-size: 15.5px; }
+.part ul { margin: 6px 0 0; padding-left: 18px; font-size: 15px; color: var(--ink-2); }
+.tag { display: inline-block; font: 600 12px var(--f-mono); color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 2px 9px; margin-bottom: 8px; }
+.tag.red { color: var(--red); background: var(--red-soft); }
+.steps { counter-reset: s; list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 10px; }
+.steps li { counter-increment: s; position: relative; padding: 12px 14px 12px 54px; background: var(--surface); border-radius: 14px; max-width: none; font-size: 15.5px; }
+.steps li::before { content: counter(s); position: absolute; left: 14px; top: 12px; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); color: var(--surface); font: 700 13px/26px var(--f-body); text-align: center; }
+.steps li b { color: var(--ink); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+td.mono { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.note { border-left: 4px solid var(--red); background: var(--surface); border-radius: 0 14px 14px 0; padding: 12px 16px; margin-top: 16px; font-size: 15.5px; max-width: 78ch; }
+svg text { font-family: var(--f-body); }
+.s-box { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.5; }
+.s-card { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.s-key { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
+.s-red { fill: var(--red-soft); stroke: var(--red); stroke-width: 1.5; }
+.s-title { font: 800 15px var(--f-disp); fill: var(--ink); }
+.s-head { font: 700 13.5px var(--f-body); fill: var(--ink); }
+.s-sub { font-size: 12px; fill: var(--muted); }
+.s-mono { font: 500 11.5px var(--f-mono); fill: var(--accent); }
+.s-api { stroke: var(--accent); stroke-width: 2.5; fill: none; }
+.s-media { stroke: var(--red); stroke-width: 2.5; fill: none; stroke-dasharray: 8 5; }
+.s-event { stroke: var(--event); stroke-width: 2; fill: none; stroke-dasharray: 2 4; }
+.s-lbl { font: 600 11.5px var(--f-body); }
+.s-lbl.api { fill: var(--accent); } .s-lbl.media { fill: var(--red); } .s-lbl.event { fill: var(--event); }
+.s-lblbg { fill: var(--surface); }
+.s-lane { stroke: var(--line); stroke-width: 2; stroke-dasharray: 4 6; }
+.ah-api { fill: var(--accent); } .ah-media { fill: var(--red); } .ah-event { fill: var(--event); }
+@media (max-width: 560px) { body { font-size: 16px; } h2 { margin-top: 40px; } }
+</style>
+</head>
+<body>
+
+
+<header class="top">
+  <div class="wrap">
+    <div class="eyebrow">Blue River · STM Kiosk Platform</div>
+    <h1>How the Smart Teller works, <em>end to end</em></h1>
+    <p>The machine at the branch, the STM middleware that talks to the bank, the portal staff use, and the video service that connects a customer to a teller. Ports and names match your setup on the laptop.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+<h2>The whole system</h2>
+<p class="lede">Two kinds of traffic leave the STM. Banking requests go to the middleware over HTTPS. Live video goes straight to LiveKit, the media server. The middleware never carries video, and LiveKit never sees account data.</p>
+
+<div class="panel">
+  <div class="legend">
+    <span><i></i>Request and answer (HTTPS / JSON)</span>
+    <span><i class="media"></i>Live audio and video (WebRTC)</span>
+    <span><i class="event"></i>Pushed events (WebSocket, SSE, webhooks)</span>
+  </div>
+  <div class="scroll">
+  <svg viewBox="0 0 1120 720" role="img" aria-label="Architecture: STM machine, STM middleware, video stack, bank systems and STM portal, with the connections between them">
+    <defs>
+      <marker id="a-api" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" class="ah-api"/></marker>
+      <marker id="a-media" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" class="ah-media"/></marker>
+      <marker id="a-event" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" class="ah-event"/></marker>
+    </defs>
+
+    <!-- STM machine -->
+    <rect x="20" y="30" width="280" height="670" rx="20" class="s-box"/>
+    <text x="40" y="60" class="s-title">STM machine (branch)</text>
+    <rect x="40" y="80" width="240" height="110" rx="14" class="s-card"/>
+    <text x="56" y="106" class="s-head">Upper screen</text>
+    <text x="56" y="126" class="s-mono">teller-display.html</text>
+    <text x="56" y="148" class="s-sub">Shows the teller's camera during</text>
+    <text x="56" y="164" class="s-sub">a call. Video only, no sound.</text>
+    <rect x="40" y="210" width="240" height="190" rx="14" class="s-key"/>
+    <text x="56" y="236" class="s-head">Lower screen: kiosk app</text>
+    <text x="56" y="256" class="s-mono">screens A0 – E13</text>
+    <text x="56" y="280" class="s-sub">Customer journeys. Calls the</text>
+    <text x="56" y="296" class="s-sub">gateway through the kiosk client.</text>
+    <text x="56" y="322" class="s-mono">kiosk-video.js</text>
+    <text x="56" y="342" class="s-sub">"Talk to a teller": face camera,</text>
+    <text x="56" y="358" class="s-sub">ID camera, screen share, voice.</text>
+    <text x="56" y="384" class="s-mono">clients/kiosk-ts</text>
+    <rect x="40" y="420" width="240" height="140" rx="14" class="s-card"/>
+    <text x="56" y="446" class="s-head">Devices</text>
+    <text x="56" y="468" class="s-sub">Card reader, PIN pad (EPP),</text>
+    <text x="56" y="484" class="s-sub">cash recycler, ID scanner,</text>
+    <text x="56" y="500" class="s-sub">fingerprint reader, cameras,</text>
+    <text x="56" y="516" class="s-sub">card printer, receipt and A4</text>
+    <text x="56" y="532" class="s-sub">printers.</text>
+    <rect x="40" y="580" width="240" height="100" rx="14" class="s-card"/>
+    <text x="56" y="606" class="s-head">Device agent</text>
+    <text x="56" y="628" class="s-sub">Health (D-6), signed journal</text>
+    <text x="56" y="644" class="s-sub">(A-1), cash positions (A-2),</text>
+    <text x="56" y="660" class="s-sub">printer results. Also /stm/v1.</text>
+
+    <!-- Middleware -->
+    <rect x="370" y="30" width="380" height="380" rx="20" class="s-box"/>
+    <text x="390" y="60" class="s-title">STM middleware</text>
+    <text x="560" y="60" class="s-mono">:8080 · Spring Boot</text>
+    <rect x="390" y="78" width="340" height="74" rx="14" class="s-key"/>
+    <text x="406" y="104" class="s-head">Smart Teller Gateway</text>
+    <text x="580" y="104" class="s-mono">/stm/v1</text>
+    <text x="406" y="124" class="s-sub">58 operations: sessions, onboarding, cards,</text>
+    <text x="406" y="140" class="s-sub">cash, forex, statements, receipts, teller calls</text>
+    <rect x="390" y="162" width="340" height="52" rx="14" class="s-card"/>
+    <text x="406" y="186" class="s-head">Portal API</text>
+    <text x="500" y="186" class="s-mono">/api/v1/portal</text>
+    <text x="406" y="204" class="s-sub">Sign-in, roles, decisions, reports</text>
+    <rect x="390" y="224" width="340" height="40" rx="12" class="s-card"/>
+    <text x="406" y="249" class="s-head">Signaling</text>
+    <text x="490" y="249" class="s-mono">/ws/signaling</text>
+    <text x="606" y="249" class="s-sub">remote commands</text>
+    <rect x="390" y="274" width="340" height="56" rx="14" class="s-card"/>
+    <text x="406" y="298" class="s-head">Bank ports</text>
+    <text x="406" y="318" class="s-sub">CoreBanking, Identity, CardSystem, Messaging</text>
+    <rect x="390" y="340" width="166" height="54" rx="12" class="s-card"/>
+    <text x="404" y="362" class="s-head">PostgreSQL</text>
+    <text x="404" y="382" class="s-mono">stm · :5432</text>
+    <rect x="566" y="340" width="164" height="54" rx="12" class="s-card"/>
+    <text x="580" y="362" class="s-head">Audit journal</text>
+    <text x="580" y="382" class="s-sub">hash-chained</text>
+
+    <!-- Video stack -->
+    <rect x="370" y="450" width="380" height="250" rx="20" class="s-box"/>
+    <text x="390" y="480" class="s-title">Video service</text>
+    <rect x="390" y="498" width="210" height="82" rx="14" class="s-key"/>
+    <text x="406" y="524" class="s-head">call-control</text>
+    <text x="500" y="524" class="s-mono">:8090</text>
+    <text x="406" y="544" class="s-sub">Queue, ringing, tokens,</text>
+    <text x="406" y="560" class="s-sub">call states, call audit</text>
+    <rect x="612" y="498" width="118" height="36" rx="10" class="s-card"/>
+    <text x="626" y="521" class="s-head">Redis</text><text x="676" y="521" class="s-mono">:6379</text>
+    <rect x="612" y="544" width="118" height="36" rx="10" class="s-card"/>
+    <text x="626" y="567" class="s-head">Postgres</text><text x="690" y="567" class="s-mono">:5434</text>
+    <rect x="390" y="600" width="210" height="84" rx="14" class="s-red"/>
+    <text x="406" y="626" class="s-head">LiveKit media server</text>
+    <text x="406" y="646" class="s-mono">:7880 · UDP 55000–55200</text>
+    <text x="406" y="666" class="s-sub">Rooms, one per call</text>
+    <rect x="612" y="600" width="118" height="84" rx="12" class="s-card"/>
+    <text x="626" y="624" class="s-head">Recording</text>
+    <text x="626" y="644" class="s-sub">Egress + MinIO</text>
+    <text x="626" y="662" class="s-sub">(optional)</text>
+
+    <!-- Bank systems -->
+    <rect x="820" y="30" width="280" height="380" rx="20" class="s-box"/>
+    <text x="840" y="60" class="s-title">Bank systems</text>
+    <text x="840" y="80" class="s-sub">Simulated in the demo profile</text>
+    <rect x="840" y="96" width="240" height="44" rx="12" class="s-card"/><text x="856" y="123" class="s-head">Core banking (ledger, GL)</text>
+    <rect x="840" y="148" width="240" height="44" rx="12" class="s-card"/><text x="856" y="175" class="s-head">IPRS and KRA</text>
+    <rect x="840" y="200" width="240" height="44" rx="12" class="s-card"/><text x="856" y="227" class="s-head">Card system and HSM</text>
+    <rect x="840" y="252" width="240" height="44" rx="12" class="s-card"/><text x="856" y="279" class="s-head">SMS gateway</text>
+    <rect x="840" y="304" width="240" height="44" rx="12" class="s-card"/><text x="856" y="331" class="s-head">Paybill</text>
+    <text x="840" y="380" class="s-sub">Screening (PEP, sanctions) runs</text>
+    <text x="840" y="396" class="s-sub">with the identity checks.</text>
+
+    <!-- Portal -->
+    <rect x="820" y="450" width="280" height="250" rx="20" class="s-box"/>
+    <text x="840" y="480" class="s-title">STM portal (browser)</text>
+    <text x="840" y="500" class="s-mono">:5174 · React</text>
+    <rect x="840" y="514" width="240" height="78" rx="14" class="s-card"/>
+    <text x="856" y="538" class="s-head">Operations pages</text>
+    <text x="856" y="558" class="s-sub">Sessions, applications, cash,</text>
+    <text x="856" y="574" class="s-sub">cards, fleet, audit, simulator</text>
+    <rect x="840" y="602" width="240" height="82" rx="14" class="s-key"/>
+    <text x="856" y="626" class="s-head">Video teller console</text>
+    <text x="856" y="646" class="s-sub">Rings, video, the customer's</text>
+    <text x="856" y="662" class="s-sub">session and decisions</text>
+
+    <!-- connections -->
+    <path d="M280 300 C 330 300, 340 115, 388 115" class="s-api" marker-end="url(#a-api)"/>
+    <rect x="300" y="170" width="68" height="18" rx="4" class="s-lblbg"/><text x="304" y="183" class="s-lbl api">HTTPS</text>
+        <path d="M730 300 L 818 220" class="s-api" marker-end="url(#a-api)"/>
+    <rect x="750" y="244" width="44" height="18" rx="4" class="s-lblbg"/><text x="756" y="257" class="s-lbl api">ports</text>
+    <path d="M390 250 C 340 250, 330 350, 282 350" class="s-event" marker-end="url(#a-event)"/>
+        <path d="M561 396 L 561 496" class="s-api" marker-end="url(#a-api)"/>
+    <rect x="568" y="420" width="104" height="18" rx="4" class="s-lblbg"/><text x="572" y="433" class="s-lbl api">D-8 / D-9 proxy</text>
+    <path d="M280 135 L 348 135 L 348 640 L 388 640" class="s-media" marker-end="url(#a-media)"/>
+    <path d="M280 370 L 348 370" class="s-media"/>
+    <rect x="296" y="520" width="50" height="34" rx="4" class="s-lblbg"/><text x="300" y="534" class="s-lbl media">WebRTC</text><text x="300" y="549" class="s-lbl media">media</text>
+    <path d="M838 650 L 602 650" class="s-media" marker-start="url(#a-media)" marker-end="url(#a-media)"/>
+    <path d="M838 560 C 780 560, 790 540, 602 540" class="s-event" marker-end="url(#a-event)" marker-start="url(#a-event)"/>
+    <rect x="740" y="512" width="74" height="18" rx="4" class="s-lblbg"/><text x="744" y="525" class="s-lbl event">ring, accept</text>
+    <path d="M838 470 C 790 470, 790 188, 732 188" class="s-api" marker-end="url(#a-api)"/>
+    <rect x="764" y="300" width="50" height="18" rx="4" class="s-lblbg"/><text x="768" y="313" class="s-lbl api">portal</text>
+    <path d="M470 600 L 470 582" class="s-event" marker-end="url(#a-event)"/>
+    <text x="410" y="594" class="s-lbl event">webhooks</text>
+  </svg>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="part">
+    <span class="tag">At the branch</span>
+    <h3>STM machine</h3>
+    <p>The lower screen runs the kiosk app: the customer journeys from the prototype (A0 landing to E13 forex). It uses the TypeScript client to call the gateway, and <code>kiosk-video.js</code> for video help.</p>
+    <p>The upper screen runs <code>teller-display.html</code>, which shows the teller full screen during a call. A small device agent reports hardware health, uploads the machine's signed journal and reports cash at end of day.</p>
+  </div>
+  <div class="part">
+    <span class="tag">:8080</span>
+    <h3>STM middleware</h3>
+    <p>One Spring Boot service. The <b>Smart Teller Gateway</b> (<code>/stm/v1</code>) is the only thing the machine talks to for banking. It checks who is calling, runs the business rules and limits, calls the bank through ports, and records everything in a hash-chained audit journal.</p>
+    <p>The <b>portal API</b> serves the staff portal. A <b>signaling</b> WebSocket lets a supervisor lock, unlock or reboot a kiosk remotely.</p>
+  </div>
+  <div class="part">
+    <span class="tag">ports</span>
+    <h3>Bank systems</h3>
+    <p>Core banking, IPRS and KRA, the card system and HSM, SMS and Paybill sit behind interfaces in <code>backend/</code>. In the demo profile, simulators implement them with a double-entry ledger and test customers. For go-live, real adapters replace the simulators without changing the gateway.</p>
+  </div>
+  <div class="part">
+    <span class="tag red">:8090 · :7880</span>
+    <h3>Video service</h3>
+    <p><b>call-control</b> decides who talks to whom. It queues calls, rings an available teller who speaks the customer's language, and issues short-lived LiveKit tokens. It also records the call's history.</p>
+    <p><b>LiveKit</b> carries the audio and video. Each call is a private room that the kiosk, the teller and the upper screen join.</p>
+  </div>
+  <div class="part">
+    <span class="tag">:5174</span>
+    <h3>STM portal</h3>
+    <p>The staff web app. Tellers and supervisors sign in with their own accounts. They follow customer sessions, decide referred applications, watch cash, cards and the fleet, and take video calls. Every decision is recorded under the signed-in person.</p>
+  </div>
+</div>
+
+<h2>What happens inside one gateway call</h2>
+<p class="lede">Take W-2, a cash withdrawal of KES 5,000. Every <code>/stm/v1</code> request passes through the same checks before any money moves.</p>
+<ol class="steps">
+  <li><b>Request ID.</b> The kiosk sends a fresh <code>X-Request-Id</code>. It is echoed in errors and in the audit journal, so one customer complaint can be traced end to end.</li>
+  <li><b>Device check.</b> The <code>Authorization</code> device token (from D-1, valid 15 minutes) must belong to the <code>X-Device-Id</code>. In production the token is obtained over mutual TLS with the machine's certificate.</li>
+  <li><b>Session check.</b> <code>X-Session-Id</code> must be an open session on this machine. A session lasts at most 30 minutes and expires after 10 minutes without activity.</li>
+  <li><b>Customer check.</b> For the customer's own accounts and cards, <code>X-Customer-Token</code> is required. It comes from card + PIN (S-2), the card-services fingerprint (B-5) or a just-opened account (B-12), and only opens that customer's accounts.</li>
+  <li><b>Business rules.</b> Limits (KES 40,000 per withdrawal and per day, multiples of 100), funds, and whether the recycler holds the notes. The answer to a failure is a clear message in English and Kiswahili.</li>
+  <li><b>Idempotency.</b> The <code>Idempotency-Key</code> is stored before the work starts. If the kiosk retries after a timeout, it gets the first answer back instead of a second debit.</li>
+  <li><b>Posting.</b> Core banking debits the account and credits the kiosk's cash GL in the same transaction (<code>GL-CASH-KES-&lt;device&gt;</code>). The gateway returns the note mix to dispense.</li>
+  <li><b>Audit.</b> The step is written to the audit journal, linked by hash to the entry before it. The portal's Audit page re-checks the whole chain.</li>
+</ol>
+<p>After dispensing, the kiosk calls W-3 if the customer took the notes, or W-4 if the shutter retracted them, which credits the customer back. At end of day the device agent reports what each cassette holds (A-2), and the Reconciliation page compares it with the GL.</p>
+
+<h2>A call from "Talk to a teller" to the end</h2>
+<p class="lede">The customer taps the button on any screen. The kiosk asks the gateway, so the call is tied to the customer's session. The teller then sees exactly what that customer has done so far.</p>
+
+<div class="panel">
+  <div class="legend">
+    <span><i></i>Request</span><span><i class="event"></i>Pushed event</span><span><i class="media"></i>Media</span>
+  </div>
+  <div class="scroll">
+  <svg viewBox="0 0 1120 820" role="img" aria-label="Sequence of a teller call between kiosk, middleware, call-control, teller portal and LiveKit">
+    <defs>
+      <marker id="b-api" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" class="ah-api"/></marker>
+      <marker id="b-media" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" class="ah-media"/></marker>
+      <marker id="b-event" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" class="ah-event"/></marker>
+    </defs>
+    <!-- lanes: kiosk 110, middleware 340, call-control 570, portal 800, livekit 1010 -->
+    <rect x="30" y="20" width="160" height="56" rx="14" class="s-key"/><text x="110" y="45" text-anchor="middle" class="s-head">STM kiosk</text><text x="110" y="64" text-anchor="middle" class="s-sub">lower + upper screen</text>
+    <rect x="260" y="20" width="160" height="56" rx="14" class="s-card"/><text x="340" y="45" text-anchor="middle" class="s-head">Middleware</text><text x="340" y="64" text-anchor="middle" class="s-sub">gateway :8080</text>
+    <rect x="490" y="20" width="160" height="56" rx="14" class="s-card"/><text x="570" y="45" text-anchor="middle" class="s-head">call-control</text><text x="570" y="64" text-anchor="middle" class="s-sub">:8090</text>
+    <rect x="720" y="20" width="160" height="56" rx="14" class="s-card"/><text x="800" y="45" text-anchor="middle" class="s-head">Teller portal</text><text x="800" y="64" text-anchor="middle" class="s-sub">video teller page</text>
+    <rect x="930" y="20" width="160" height="56" rx="14" class="s-red"/><text x="1010" y="45" text-anchor="middle" class="s-head">LiveKit</text><text x="1010" y="64" text-anchor="middle" class="s-sub">:7880</text>
+    <line x1="110" y1="80" x2="110" y2="800" class="s-lane"/>
+    <line x1="340" y1="80" x2="340" y2="800" class="s-lane"/>
+    <line x1="570" y1="80" x2="570" y2="800" class="s-lane"/>
+    <line x1="800" y1="80" x2="800" y2="800" class="s-lane"/>
+    <line x1="1010" y1="80" x2="1010" y2="800" class="s-lane"/>
+
+    <!-- 0 teller available -->
+    <path d="M800 112 L 574 112" class="s-api" marker-end="url(#b-api)"/>
+    <text x="687" y="104" text-anchor="middle" class="s-lbl api">0 · Go available (languages en, sw)</text>
+    <!-- 1 -->
+    <path d="M110 160 L 336 160" class="s-api" marker-end="url(#b-api)"/>
+    <text x="223" y="146" text-anchor="middle" class="s-lbl api">1 · POST /support/teller-calls (D-8)</text>
+    <text x="223" y="180" text-anchor="middle" class="s-sub">screen, flow, applicationId, language</text>
+    <!-- 2 -->
+    <path d="M340 210 L 566 210" class="s-api" marker-end="url(#b-api)"/>
+    <text x="453" y="200" text-anchor="middle" class="s-lbl api">2 · POST /api/calls</text>
+    <text x="453" y="230" text-anchor="middle" class="s-sub">reference = the customer's session</text>
+    <!-- 3 poll -->
+    <path d="M110 262 L 336 262" class="s-api" marker-end="url(#b-api)"/>
+    <path d="M340 274 L 566 274" class="s-api" marker-end="url(#b-api)"/>
+    <text x="223" y="252" text-anchor="middle" class="s-lbl api">3 · GET D-9 every 2 s</text>
+    <text x="453" y="296" text-anchor="middle" class="s-sub">status poll keeps the call alive</text>
+    <!-- 4 ring -->
+    <path d="M570 330 L 796 330" class="s-event" marker-end="url(#b-event)"/>
+    <text x="683" y="320" text-anchor="middle" class="s-lbl event">4 · ring (20 s to answer)</text>
+    <!-- 5 accept -->
+    <path d="M800 384 L 574 384" class="s-api" marker-end="url(#b-api)"/>
+    <text x="687" y="374" text-anchor="middle" class="s-lbl api">5 · Accept → room + teller token</text>
+    <!-- 6 teller joins -->
+    <path d="M800 430 L 1006 430" class="s-media" marker-end="url(#b-media)"/>
+    <text x="903" y="420" text-anchor="middle" class="s-lbl media">6 · teller camera + mic</text>
+    <!-- 7 media for kiosk -->
+    <path d="M340 482 L 566 482" class="s-api" marker-end="url(#b-api)"/>
+    <text x="453" y="472" text-anchor="middle" class="s-lbl api">7 · CONNECTED: get kiosk token</text>
+    <path d="M336 506 L 114 506" class="s-api" marker-end="url(#b-api)"/>
+    <text x="223" y="526" text-anchor="middle" class="s-sub">D-9 answer carries media: roomUrl, token</text>
+    <!-- 8 kiosk joins -->
+    <path d="M110 566 L 1006 566" class="s-media" marker-start="url(#b-media)" marker-end="url(#b-media)"/>
+    <text x="560" y="556" text-anchor="middle" class="s-lbl media">8 · face camera, ID camera, kiosk screen, voice  ⇄  teller video and voice</text>
+    <!-- 9 upper display -->
+    <path d="M570 606 L 114 606" class="s-event" marker-end="url(#b-event)"/>
+    <text x="340" y="598" text-anchor="middle" class="s-lbl event">9 · upper screen told "connected", joins hidden and video-only</text>
+    <!-- 10 decision -->
+    <path d="M800 660 L 344 660" class="s-api" marker-end="url(#b-api)"/>
+    <text x="572" y="650" text-anchor="middle" class="s-lbl api">10 · Open the session, decide the application</text>
+    <path d="M110 700 L 336 700" class="s-api" marker-end="url(#b-api)"/>
+    <text x="223" y="690" text-anchor="middle" class="s-lbl api">B-13 poll sees the decision</text>
+    <!-- 11 end -->
+    <path d="M800 750 L 574 750" class="s-api" marker-end="url(#b-api)"/>
+    <text x="687" y="740" text-anchor="middle" class="s-lbl api">11 · End call</text>
+    <path d="M1010 780 L 574 780" class="s-event" marker-end="url(#b-event)"/>
+    <text x="792" y="798" text-anchor="middle" class="s-lbl event">LiveKit webhooks: who joined, left, published</text>
+  </svg>
+  </div>
+</div>
+
+<ol class="steps">
+  <li><b>The teller goes available</b> on the portal's Video teller page, with the languages they speak. call-control keeps their presence alive with a heartbeat and pushes events to the page.</li>
+  <li><b>The customer taps "Talk to a teller".</b> The kiosk calls D-8 with the screen it is on (for example <code>B6</code>), the service and any application in progress.</li>
+  <li><b>The middleware asks call-control for a call.</b> The call reference is the customer's session id (<code>ses_…</code>), and the kiosk's device id becomes the call's terminal.</li>
+  <li><b>The kiosk polls D-9 every 2 seconds.</b> Each poll passes through to call-control, which also tells it the customer is still waiting. If polling stops for 10 seconds, the call is dropped, so a teller never rings for a customer who has walked away.</li>
+  <li><b>call-control rings a teller</b> who is available and speaks the language, first come first served. The teller has 20 seconds. A missed ring sets the teller to Away and the next teller is rung.</li>
+  <li><b>The teller accepts.</b> call-control creates a LiveKit room for this call and gives the teller a two-minute token to join it. The teller's camera is published as <code>teller-cam</code>.</li>
+  <li><b>The kiosk gets its token.</b> Once the call is connected, the next D-9 answer carries <code>media</code>: the room address and a token for the kiosk.</li>
+  <li><b>The kiosk joins the room</b> and publishes the customer's face camera, the ID camera, its own screen and the handset microphone. The teller's voice plays on the lower screen.</li>
+  <li><b>The upper screen</b> listens to call-control for its terminal. When the call connects it joins the same room hidden and receive-only, and shows only the teller's camera. It has no sound, so there is no echo, and it is never recorded.</li>
+  <li><b>The teller helps.</b> The portal opens the customer's session from the call reference. If an application is waiting (a screening referral, or a face that did not match three times), the teller clears or rejects it. The kiosk sees the decision on its next B-13 poll and carries on. The customer's screen is hidden from the teller while the PIN pad is in use.</li>
+  <li><b>The call ends.</b> The teller ends it, or the customer hangs up. The kiosk's next D-9 says <code>ENDED</code>, and the upper screen goes back to "Need help?". LiveKit's webhooks tell call-control who joined, left and published, so it knows when a side drops out.</li>
+</ol>
+
+<div class="note"><b>Use the same terminal id on both screens.</b> Through the gateway, the call's terminal is the machine's device id, for example <code>STM-NBO-MOI-03</code>. Open the upper display with that id, <code>open-teller-display-on-stm.cmd 192.168.1.49 STM-NBO-MOI-03 1280 0 8090</code>, or it will not know when a call starts.</div>
+
+<h2>Where each piece runs</h2>
+<div class="panel scroll">
+  <table>
+    <thead><tr><th>Service</th><th>Port</th><th>Data it keeps</th><th>Started with</th></tr></thead>
+    <tbody>
+      <tr><td>STM middleware</td><td class="mono">8080</td><td>PostgreSQL <code>stm</code> on 5432: sessions, applications, cash, cards, audit, simulator ledger</td><td><code>mvn spring-boot:run</code></td></tr>
+      <tr><td>call-control</td><td class="mono">8090</td><td>Redis 6379 (queue, presence), PostgreSQL 5434 (call audit)</td><td><code>start-call-control.ps1 -Port 8090</code></td></tr>
+      <tr><td>LiveKit</td><td class="mono">7880 · UDP 55000–55200</td><td>Nothing kept: media only</td><td><code>start-livekit.ps1 -CallControlPort 8090</code></td></tr>
+      <tr><td>STM portal</td><td class="mono">5174</td><td>None: calls the middleware and call-control</td><td><code>npm run dev</code></td></tr>
+      <tr><td>Kiosk test page, upper display</td><td class="mono">served by 8090</td><td>None</td><td><code>open-kiosk-test-on-stm.cmd</code>, <code>open-teller-display-on-stm.cmd</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Security in one paragraph</h2>
+<p>The machine proves who it is with a device token (mutual TLS in production), and every request names the session it belongs to. A customer's accounts open only after card + PIN, a fingerprint with a one-time code, or a newly opened account. PINs exist only as encrypted PIN blocks and are never stored or logged. Money calls are idempotent, so retries cannot pay out twice. Staff sign in with their own accounts and roles, and viewing a customer's ID images is itself audited. Video rooms are private per call and joined with short-lived tokens, and the teller never sees the PIN screens.</p>
+
+</main>
+
+</body>
+</html>

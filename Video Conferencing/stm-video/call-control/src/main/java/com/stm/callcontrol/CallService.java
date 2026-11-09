@@ -21,6 +21,16 @@ public class CallService {
   static final long RING_MS = 20_000, RECONNECT_MS = 60_000;
   /** A queued call whose kiosk page has had no event stream for this long is a ghost (page closed, reloaded, network lost). */
   static final long KIOSK_GRACE_MS = 10_000;
+  /** Kiosks that call through the STM middleware (D-8/D-9) have no event stream here; the middleware's status polls
+   *  (GET /api/calls/{id}, every 2 s) prove the customer is still there. In memory: one call-control node per kiosk call. */
+  private final java.util.concurrent.ConcurrentHashMap<String, Long> polled = new java.util.concurrent.ConcurrentHashMap<>();
+
+  /** Called for every status poll from a gateway. */
+  public void touch(String callId) {
+    long now = System.currentTimeMillis();
+    polled.put(callId, now);
+    if (polled.size() > 1000) polled.values().removeIf(t -> now - t > 3_600_000);
+  }
 
   private final CallStore store;
   private final StreamHub hub;
@@ -161,7 +171,10 @@ public class CallService {
   }
 
   private boolean kioskGone(Call c) {
-    return System.currentTimeMillis() - c.createdAt > KIOSK_GRACE_MS && !hub.hasStream("kiosk", c.id);
+    long now = System.currentTimeMillis();
+    Long lastPoll = polled.get(c.id);
+    if (lastPoll != null && now - lastPoll <= KIOSK_GRACE_MS) return false;
+    return now - c.createdAt > KIOSK_GRACE_MS && !hub.hasStream("kiosk", c.id);
   }
 
   private void abandonGhost(Call c) {

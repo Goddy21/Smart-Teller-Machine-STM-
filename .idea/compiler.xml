@@ -8,10 +8,10 @@
         <outputRelativeToContentRoot value="true" />
         <module name="stm-webrtc" />
         <module name="stm-middleware" />
+        <module name="call-control" />
       </profile>
     </annotationProcessing>
     <bytecodeTargetLevel>
-      <module name="call-control" target="21" />
       <module name="stm-middleware (1)" target="21" />
     </bytecodeTargetLevel>
   </component>

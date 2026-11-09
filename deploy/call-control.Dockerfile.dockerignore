@@ -1,0 +1,8 @@
+**/target
+**/node_modules
+alternatives
+media-plane
+integration-tests
+e2e
+*.exe
+.git

@@ -8,6 +8,7 @@
         <option value="$PROJECT_DIR$/Video Conferencing/Teller console UI/pom.xml" />
         <option value="$PROJECT_DIR$/stm-middleware/stm-middleware/pom.xml" />
         <option value="$PROJECT_DIR$/Video Conferencing/stm-video/alternatives/p2p-webrtc/backend/pom.xml" />
+        <option value="$PROJECT_DIR$/Video Conferencing/stm-video/call-control/pom.xml" />
       </list>
     </option>
   </component>

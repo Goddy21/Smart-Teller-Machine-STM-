@@ -1,0 +1,43 @@
+1. Databases (Docker)
+
+Middleware’s Postgres (port 5432):
+
+cd "C:\Goddie\STM Middleware\stm-middleware"
+docker compose up -d db
+
+docker compose down -v
+docker compose up -d db
+
+Video’s Redis and Postgres (port 5434):
+
+cd "C:\Goddie\STM Middleware\Video Conferencing\stm-video"
+powershell -ExecutionPolicy Bypass -File scripts\start-infra.ps1
+
+2. Middleware (port 8080)
+
+cd "C:\Goddie\STM Middleware\stm-middleware"
+mvn spring-boot:run
+
+3. LiveKit and call-control (port 8090)
+
+The middleware uses 8080, so call-control has to move to 8090 and LiveKit has to be told about it:
+
+cd "C:\Goddie\STM Middleware\Video Conferencing\stm-video"
+powershell -ExecutionPolicy Bypass -File scripts\start-livekit.ps1 -CallControlPort 8090
+
+In another window:
+
+powershell -ExecutionPolicy Bypass -File scripts\start-call-control.ps1 -Port 8090
+
+http://localhost:8090/teller/index.html
+
+4. Portal (port 5174)
+
+cd "C:\Goddie\STM Middleware\stm-portal"
+npm install      # only if node_modules is missing
+npm run dev
+
+5. Try the journeys
+cd "C:\Goddie\STM Middleware\stm-middleware"
+.\scripts\demo-journey.ps1                    # all flows
+.\scripts\demo-journey.ps1 -Flow Referral     # or just one
