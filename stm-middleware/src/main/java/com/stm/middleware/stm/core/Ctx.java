@@ -14,6 +14,7 @@ public final class Ctx {
     private final HttpServletRequest request;
     private final CustomerTokens tokens;
     private String customerId;
+    private boolean limitedToken;      // BIOMETRIC_ONLY: face + thumbprint without the phone code
 
     Ctx(DevicePrincipal device, StmSession session, HttpServletRequest request, CustomerTokens tokens) {
         this.device = device;
@@ -47,10 +48,28 @@ public final class Ctx {
 
     public boolean sw() { return "sw".equals(lang()); }
 
-    /** The verified customer (X-Customer-Token), or CUSTOMER_TOKEN_REQUIRED / CUSTOMER_TOKEN_INVALID. */
+    /**
+     * The verified customer (X-Customer-Token), or CUSTOMER_TOKEN_REQUIRED / CUSTOMER_TOKEN_INVALID.
+     * A BIOMETRIC_ONLY token (phone lost) is refused here with STEP_UP_REQUIRED: it only works for
+     * {@link #customerIdForMobileChange()}.
+     */
     public String customerId() {
-        if (customerId == null) customerId = tokens.validate(request.getHeader("X-Customer-Token"), sessionId());
+        resolveCustomer();
+        if (limitedToken) throw Errors.stepUpRequired();
         return customerId;
+    }
+
+    /** As {@link #customerId()}, and also accepts the face + thumbprint token issued when the phone is lost. */
+    public String customerIdForMobileChange() {
+        resolveCustomer();
+        return customerId;
+    }
+
+    private void resolveCustomer() {
+        if (customerId != null) return;
+        String token = request.getHeader("X-Customer-Token");
+        customerId = tokens.validate(token, sessionId());
+        limitedToken = "BIOMETRIC_ONLY".equals(tokens.source(token, sessionId()));
     }
 
     public Optional<String> optionalCustomerId() {
@@ -64,6 +83,20 @@ public final class Ctx {
         if (!customerId().equals(expectedCustomerId)) {
             throw Errors.forbidden("This customer token does not cover that customer.");
         }
+    }
+
+    /** How the customer was verified for this token (see {@link CustomerTokens}). */
+    public String customerAuth() {
+        return tokens.source(request.getHeader("X-Customer-Token"), sessionId());
+    }
+
+    /**
+     * Sensitive changes (PIN reset, unblock, reactivation, enrolment, signature) need the code and thumbprint check,
+     * or a just-opened account. A card + PIN login is not enough: STEP_UP_REQUIRED.
+     */
+    public void requireStrongAuth() {
+        String src = customerAuth();
+        if (!"VERIFIED_IDENTITY".equals(src) && !"ONBOARDING".equals(src)) throw Errors.stepUpRequired();
     }
 
     public String idempotencyKey() {

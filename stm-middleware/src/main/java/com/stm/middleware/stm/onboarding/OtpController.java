@@ -49,8 +49,10 @@ public class OtpController {
         this.sim = sim;
     }
 
-    public record SendRequest(@NotBlank @Pattern(regexp = "ONBOARDING_PHONE|CARD_SERVICES") String purpose,
+    /** MOBILE_CHANGE sends the code to the NEW number of a pending change (changeRef from M-1). */
+    public record SendRequest(@NotBlank @Pattern(regexp = "ONBOARDING_PHONE|CARD_SERVICES|MOBILE_CHANGE") String purpose,
                               @Size(max = 40) String applicationId, @Size(max = 40) String lookupRef,
+                              @Size(max = 40) String changeRef,
                               @Size(max = 20) String mobile, @Pattern(regexp = "SMS") String channel) {}
 
     @PostMapping("/send")
@@ -69,6 +71,14 @@ public class OtpController {
             }
             subject = a.id();
             mobile = a.mobile();
+        } else if ("MOBILE_CHANGE".equals(req.purpose())) {
+            if (req.changeRef() == null) throw Errors.validation("changeRef", "changeRef from the phone-number change is required");
+            mobile = jdbc.sql("""
+                    SELECT new_mobile FROM mobile_changes WHERE ref = :r AND session_id = :s AND status = 'PENDING'""")
+                    .param("r", req.changeRef()).param("s", ctx.sessionId()).query(String.class).optional()
+                    .orElseThrow(() -> Errors.notFound("MOBILE_CHANGE_NOT_FOUND", "Start the phone-number change first",
+                            "Anza kubadilisha nambari ya simu kwanza"));
+            subject = req.changeRef();
         } else {
             if (req.lookupRef() == null) throw Errors.validation("lookupRef", "lookupRef from C-1 is required");
             String customerId = jdbc.sql("SELECT customer_id FROM customer_lookups WHERE ref = :r AND session_id = :s")
@@ -150,9 +160,9 @@ public class OtpController {
         if ("ONBOARDING_PHONE".equals(o.purpose())) {
             Application a = applications.expect(applications.mine(ctx, o.subject()), "KYC_CAPTURED");
             applications.update(a.id(), Map.of("otp_verified", true, "status", "PHONE_VERIFIED"));
-        } else {
+        } else if ("CARD_SERVICES".equals(o.purpose())) {
             jdbc.sql("UPDATE customer_lookups SET otp_verified = true WHERE ref = :r").param("r", o.subject()).update();
-        }
+        }   // MOBILE_CHANGE: the confirm call (M-2) checks that this code was verified
         audit.session(ctx, "OTP_VERIFIED", "otpRef", req.otpRef(), "purpose", o.purpose(), "subject", o.subject());
         return Map.of("verified", true, "attemptsLeft", o.left());
     }

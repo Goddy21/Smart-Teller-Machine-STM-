@@ -91,13 +91,14 @@ export function Simulator() {
               <tbody>
                 {customers.data.map((c) => (
                   <tr key={c.id}>
-                    <td><b>{c.fullName}</b><small className="muted"><br /><Mono>{c.id}</Mono> · ID {c.idNumber}</small></td>
-                    <td><Mono>{c.mobile}</Mono></td>
+                    <td><b>{c.fullName}</b><small className="muted"><br /><Mono>{c.id}</Mono> · ID {c.idNumber}
+                      <br />{c.fingersEnrolled ? fmt.plural(c.fingersEnrolled, "fingerprint") : "no fingerprints"} · {c.signatureSource ? "signature on file" : "no signature"}</small></td>
+                    <td><Mono>{c.mobile}</Mono>{c.mobileChangedAt && <small className="muted"><br />changed {fmt.ago(c.mobileChangedAt)}</small>}</td>
                     <td>{(c.accounts ?? []).map((a) => (
                       <div key={a.id}><button type="button" className="link" onClick={() => setAccount(a.id)}>{fmt.words(a.type)} {a.number}</button>
-                        <span className="muted small"> {fmt.money(a.available, a.currency)}{a.status !== "ACTIVE" ? ` · ${fmt.words(a.status)}` : ""}</span></div>
+                        <span className="muted small"> {fmt.money(a.available, a.currency)}</span>{a.status !== "ACTIVE" && <> <Badge value={a.status} /></>}</div>
                     ))}</td>
-                    <td>{(c.cards ?? []).map((k) => <div key={k.id}><Mono>{k.maskedPan}</Mono> <Badge value={k.status} /></div>)}</td>
+                    <td>{(c.cards ?? []).map((k) => <div key={k.id}><Mono>{k.maskedPan}</Mono> <Badge value={k.status} />{k.reason && k.status !== "ACTIVE" && <span className="muted small"> {fmt.words(k.reason)}</span>}</div>)}</td>
                   </tr>
                 ))}
               </tbody>

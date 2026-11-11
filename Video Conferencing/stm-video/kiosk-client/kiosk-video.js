@@ -129,11 +129,13 @@ export class VideoSession {
     room.on(RoomEvent.TrackMuted, pub => { if (pub.trackName === "teller-cam") this.#showTeller(false); });     // teller turned the camera off
     room.on(RoomEvent.TrackUnmuted, pub => { if (pub.trackName === "teller-cam") this.#showTeller(true); });
     room.on(RoomEvent.DataReceived, (payload, _p, _k, topic) => this.#onData(payload, topic));
+    room.on(RoomEvent.ParticipantConnected, () => this.mirror());   // data is not stored: tell a teller who joins later
     room.on(RoomEvent.Disconnected, () => {
       if (this.room !== room) return;              // we closed it ourselves
       this.room = null; this.#showTeller(false); this.deps.onDropped();
     });
     await room.connect(url, token);
+    this.mirror();                                  // the teller sees the current screen straight away
     await this.#publishMic();
     await this.#publishCameras();
     if (this.deps.shareScreen !== false) await this.#publishScreen();

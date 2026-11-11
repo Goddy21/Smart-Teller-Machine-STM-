@@ -8,6 +8,7 @@ import com.stm.middleware.stm.device.DeviceHealthService;
 import com.stm.middleware.stm.receipts.SmsService;
 import com.stm.middleware.stm.support.Captures;
 import com.stm.middleware.stm.support.CardNames;
+import com.stm.middleware.stm.support.SignatureCheck;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import org.springframework.http.HttpStatus;
@@ -187,12 +188,13 @@ public class OnboardingController {
     public Map<String, Object> signature(Ctx ctx, @PathVariable String id, @Valid @RequestBody SignatureRequest req) {
         Application a = applications.expect(applications.mine(ctx, id), "PHONE_VERIFIED", "SIGNATURE_CAPTURED");
         byte[] png = Captures.decode("image", req.image());
-        if (png == null || png.length < 32) throw Errors.validation("image", "The signature image is empty");
+        // Not an empty pad and not a scribbled-over box: this image becomes the specimen on the account (B-12).
+        SignatureCheck.Quality quality = SignatureCheck.validate("image", png);
         String sigId = Ids.next("sig");
         captures.store("APPLICATION", id, "SIGNATURE", png);
         applications.update(a.id(), Map.of("signature_id", sigId, "status", "SIGNATURE_CAPTURED"));
         audit.session(ctx, "SIGNATURE_CAPTURED", "applicationId", id, "signatureId", sigId,
-                "strokes", req.strokes(), "capturedWith", req.capturedWith());
+                "strokes", req.strokes(), "capturedWith", req.capturedWith(), "inkRatio", quality.inkRatio());
         return Map.of("signatureId", sigId, "status", "SIGNATURE_CAPTURED");
     }
 
@@ -231,6 +233,26 @@ public class OnboardingController {
         cols.put("name_on_card", nameOnCard);
         cols.put("reference", ref);
         applications.update(id, cols);
+        // The mandate goes to core banking with the account: the specimen signature (B-11) and the thumbprint that
+        // passed at B-5 become the bank's own records, so later visits match against the bank, not only IPRS.
+        boolean signatureRegistered = false, biometricsEnrolled = false;
+        Optional<Captures.Capture> sig = captures.latest(id, "SIGNATURE");
+        if (sig.isPresent()) {
+            core.registerSignature(opened.customerId(), sig.get().content(), sig.get().mimeType(), "STM_ONBOARDING");
+            signatureRegistered = true;
+        }
+        record Print(String finger, byte[] template, int quality) {}
+        Optional<Print> print = jdbc.sql("""
+                SELECT finger, finger_template, finger_quality FROM biometric_checks
+                WHERE application_id = :a AND overall = 'PASS' AND finger_template IS NOT NULL
+                ORDER BY created_at DESC LIMIT 1""").param("a", id)
+                .query((rs, n) -> new Print(rs.getString(1), rs.getBytes(2), rs.getInt(3))).optional();
+        if (print.isPresent()) {
+            core.enrolBiometrics(opened.customerId(),
+                    List.of(new CoreBanking.FingerTemplate(print.get().finger(), print.get().template(), print.get().quality())),
+                    "STM_ONBOARDING");
+            biometricsEnrolled = true;
+        }
         String token = customerTokens.issue(ctx.sessionId(), opened.customerId(), "ONBOARDING");
         sessions.setCustomer(ctx.sessionId(), opened.customerId(), r.fullName());
         String branchName = jdbc.sql("SELECT name FROM branches WHERE code = :c").param("c", opened.account().branch())
@@ -241,7 +263,8 @@ public class OnboardingController {
                 "name", r.firstName(), "product", productName, "account", display(opened.account().number()),
                 "branch", branchName, "ref", ref));
         audit.session(ctx, "ACCOUNT_OPENED", "applicationId", id, "customerId", opened.customerId(),
-                "accountId", opened.account().id(), "reference", ref);
+                "accountId", opened.account().id(), "reference", ref, "signatureRegistered", signatureRegistered,
+                "biometricsEnrolled", biometricsEnrolled);
         Map<String, Object> account = new LinkedHashMap<>();
         account.put("accountId", opened.account().id());
         account.put("accountNumber", opened.account().number());
@@ -258,6 +281,7 @@ public class OnboardingController {
         out.put("nameOnCard", nameOnCard);
         out.put("reference", ref);
         out.put("smsSent", "QUEUED".equals(sent.status()));
+        out.put("mandate", Map.of("signatureRegistered", signatureRegistered, "biometricsEnrolled", biometricsEnrolled));
         return out;
     }
 

@@ -46,6 +46,14 @@ services:
       STM_PORTALAUTH_ALLOWSHAREDKEY: ${ALLOW_PORTAL_KEY:-false}   # true only while scripts still use X-Portal-Key
       STM_ALLOWTELLERKEYINQUERY: "false"
       SERVER_FORWARDHEADERSSTRATEGY: framework
+      # Portal sign-in codes by email. No SMTP_HOST = simulated: codes show under Portal accounts > Emails.
+      PORTAL_EMAIL_OTP: ${PORTAL_EMAIL_OTP:-true}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURITY: ${SMTP_SECURITY:-STARTTLS}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-Smart Teller Portal <no-reply@stm.local>}
       JAVA_TOOL_OPTIONS: -Duser.timezone=Africa/Nairobi
       TZ: Africa/Nairobi
 

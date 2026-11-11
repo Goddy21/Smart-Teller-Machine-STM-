@@ -91,6 +91,25 @@ The answer holds the terminal token, shown only once. Give it to the kiosk app (
 `https://SERVER_IP` and `provisioningSecret` to the value from `.env`, and turn off SSL certificate verification
 (or import `certs/ca.crt` under Settings → Certificates).
 
+## Sign-in codes by email
+
+People with an email address on their portal account get a 6-digit code by email after their password. People without
+one sign in with the password only (the Portal accounts page marks them). Add the mail server to `.env`:
+
+```
+SMTP_HOST=smtp.office365.com        # or the bank's mail relay
+SMTP_PORT=587
+SMTP_SECURITY=STARTTLS              # STARTTLS (587), SSL (465) or NONE (internal relay on port 25)
+SMTP_USERNAME=stm-portal@bank.co.ke # blank if the relay needs no login
+SMTP_PASSWORD=...
+MAIL_FROM=Smart Teller Portal <stm-portal@bank.co.ke>
+```
+then `docker compose up -d middleware`. The server must be allowed to reach that host and port.
+
+Without `SMTP_HOST`, mail is **simulated**: nothing is sent, and an administrator reads the codes under
+**Portal accounts → Emails**. If the mail server fails and nobody can sign in, set `PORTAL_EMAIL_OTP=false` in `.env`
+and run `docker compose up -d middleware` (password only) until it is fixed.
+
 ## Everyday commands (in `/opt/stm/deploy`)
 
 | Task | Command |

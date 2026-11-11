@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { usePortal } from "../context";
 import type { JournalEntry } from "../api/portal";
 import type { Recording, TransactionEvidence } from "../api/calls";
-import { Badge, Button, Card, Empty, ErrorNote, fmt, Mono, Segmented, Spinner, useLoad } from "../ui/kit";
+import { Badge, Button, Card, Empty, ErrorNote, fmt, Mono, Pager, Segmented, Spinner, useDebounced, useLoad, usePaging } from "../ui/kit";
 import { IconChevronRight, IconDownload, IconSearch, IconShield, IconVideo } from "../ui/Icons";
 
 export function Audit({ initialEntity }: { initialEntity?: string }) {
@@ -217,19 +217,22 @@ function VideoEvidence() {
 function DeviceJournal() {
   const { portal } = usePortal();
   const [ref, setRef] = useState("");
-  const j = useLoad(() => portal.deviceJournal({ ref: ref.trim() || undefined }), [ref], 20_000);
+  const dref = useDebounced(ref.trim());
+  const paging = usePaging("device-journal", [dref], 50);
+  const j = useLoad(() => portal.deviceJournalPage({ ref: dref || undefined, page: paging.page, size: paging.size }), [dref, paging.page, paging.size], 20_000);
+  const items = j.data?.items ?? [];
   return (
     <Card pad={false} title="Kiosk electronic journal" subtitle="Each entry is signed by the kiosk (HMAC). A bad signature means the batch was altered."
           actions={<label className="search"><IconSearch /><input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Transaction reference…" /></label>}>
       {j.error && !j.data ? <div className="card__body"><ErrorNote error={j.error} onRetry={j.reload} /></div>
         : !j.data ? <div className="card__body"><Spinner /></div>
-        : j.data.length === 0 ? <Empty icon={<IconShield />} title="No journal entries" />
+        : items.length === 0 ? <Empty icon={<IconShield />} title={dref ? "No entries match" : "No journal entries"} />
         : (
           <div className="table-wrap">
             <table className="table table--dense">
               <thead><tr><th>Kiosk time</th><th>Kiosk</th><th className="num">Seq</th><th>Event</th><th>Reference</th><th>Data</th><th>Signature</th></tr></thead>
               <tbody>
-                {j.data.map((e) => (
+                {items.map((e) => (
                   <tr key={`${e.terminalCode}-${e.seq}`} className={e.signatureValid ? "" : "is-red"}>
                     <td className="muted">{fmt.dateTime(e.at)}</td>
                     <td><Mono>{e.terminalCode}</Mono></td>
@@ -244,6 +247,7 @@ function DeviceJournal() {
             </table>
           </div>
         )}
+      <Pager data={j.data} onPage={paging.setPage} onSize={paging.setSize} />
     </Card>
   );
 }
@@ -251,18 +255,20 @@ function DeviceJournal() {
 /** R-2 and OTP messages, as the SMS gateway received them (codes masked). */
 function SmsLog() {
   const { portal, openSession } = usePortal();
-  const m = useLoad(() => portal.sms(), [], 20_000);
+  const paging = usePaging("sms", [], 50);
+  const m = useLoad(() => portal.smsPage({ page: paging.page, size: paging.size }), [paging.page, paging.size], 20_000);
+  const items = m.data?.items ?? [];
   return (
     <Card pad={false} title="Text messages" subtitle="Receipts and one-time codes sent to customers. Codes and numbers are masked.">
       {m.error && !m.data ? <div className="card__body"><ErrorNote error={m.error} onRetry={m.reload} /></div>
         : !m.data ? <div className="card__body"><Spinner /></div>
-        : m.data.length === 0 ? <Empty title="No messages yet" />
+        : items.length === 0 ? <Empty title="No messages yet" />
         : (
           <div className="table-wrap">
             <table className="table table--dense">
               <thead><tr><th>When</th><th>To</th><th>Message</th><th>Status</th></tr></thead>
               <tbody>
-                {m.data.map((x) => (
+                {items.map((x) => (
                   <tr key={x.id} className={x.sessionId ? "clickable" : ""} onClick={() => x.sessionId && openSession(x.sessionId)}>
                     <td className="muted">{fmt.dateTime(x.createdAt)}</td>
                     <td><Mono>{x.mobile}</Mono><small className="muted"> {x.language.toUpperCase()}</small></td>
@@ -274,6 +280,7 @@ function SmsLog() {
             </table>
           </div>
         )}
+      <Pager data={m.data} onPage={paging.setPage} onSize={paging.setSize} />
     </Card>
   );
 }

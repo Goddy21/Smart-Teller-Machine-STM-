@@ -109,6 +109,9 @@ public class KycChecks {
         out.put("sanctions", k.sanctions());
         out.put("highRisk", highRisk);
         out.put("flags", reasons);
+        // What the bank holds to recognise this customer: customers from before the STM may have neither.
+        out.put("biometricsEnrolled", core.biometrics(customerId).enrolled());
+        out.put("signatureOnFile", core.signature(customerId).isPresent());
         // Self-service is allowed while KYC is current and nothing needs a person to look at it.
         out.put("selfServiceAllowed", !"REFRESH_DUE".equals(status) && kraOnFile && !highRisk);
         return out;

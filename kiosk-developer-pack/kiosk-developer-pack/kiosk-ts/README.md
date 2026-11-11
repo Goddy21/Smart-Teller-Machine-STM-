@@ -77,6 +77,23 @@ const dep = await stm.openDeposit({ targetRef: target.targetRef, depositorMobile
 const counted = await stm.depositCounted(dep.depositId, { accepted: [{ denomination: "1000", count: 10 }] });
 await stm.commitDeposit(dep.depositId, counted.total, commitKey);
 
+// C1 Card services for an existing customer: prove who it is, then offer what the server says
+const who = await stm.lookupCustomer({ by: "ID_DOCUMENT", documentType: "NATIONAL_ID", documentNumber });
+const code = await stm.sendOtp({ purpose: "CARD_SERVICES", lookupRef: who.lookupRef });
+await stm.verifyOtp(code.otpRef, typedCode);
+await stm.verifyBiometrics({ customerId: who.customerId, lookupRef: who.lookupRef, fingerprint });   // strong customer token
+const profile = await stm.customerProfile(who.customerId);     // profile.suggestions: ENROL_BIOMETRICS, REGISTER_SIGNATURE …
+const myCards = await stm.cards(who.customerId);               // one row per card: statusText, actions
+await stm.changePin(cardId, { currentPinBlock, newPinBlock }); // or resetPin, temporaryBlockCard, unblockCard, blockCard
+await stm.reactivateAccount(accountId);                        // a DORMANT account
+await stm.enrolBiometrics(who.customerId, { consent: true, fingerprints: [fingerprint] });
+await stm.registerSignature(who.customerId, { image: signaturePng, strokes, capturedWith: "STYLUS" });
+const change = await stm.startMobileChange(who.customerId, newMobile);
+const code2 = await stm.sendOtp({ purpose: "MOBILE_CHANGE", changeRef: change.changeRef });   // goes to the NEW number
+await stm.verifyOtp(code2.otpRef, typedCode2);
+await stm.confirmMobileChange(who.customerId, change.changeRef);
+// 403 STEP_UP_REQUIRED after card + PIN: run the four lines at the top, then call again. See docs/CARD-AND-CUSTOMER-SERVICES.md.
+
 // any screen: "Talk to a teller" (or kiosk-video.js in gateway mode with headers: () => stm.authHeaders())
 const call = await stm.requestTeller({ screen: "B6", flow: "ACCOUNT_OPENING", applicationId });
 // poll stm.tellerCall(call.callId) every 2 s; when .media is set, join the LiveKit room (media.roomUrl, media.token)

@@ -41,6 +41,15 @@ export const IconDownload = (p: P) => <I {...p}><path d="M21 15v4a2 2 0 0 1-2 2H
 export const IconFingerprint = (p: P) => <I {...p}><path d="M12 10a2 2 0 0 0-2 2c0 1 0 3.5-1 6M14 13.1c0 2.4 0 6.4-2 8.9M17.3 21c.2-1 .7-3.7.7-5M2 12a10 10 0 0 1 18-6M2 16h.01M21.8 16c.2-2 .1-5.3 0-6M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .3-2M8.7 6.4A6 6 0 0 1 18 12v1" /></I>;
 export const IconFace = (p: P) => <I {...p}><circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" /></I>;
 export const IconBell = (p: P) => <I {...p}><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0" /></I>;
+export const IconExpand = (p: P) => <I {...p}><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></I>;
+export const IconShrink = (p: P) => <I {...p}><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /></I>;
+export const IconFullscreen = (p: P) => <I {...p}><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" /></I>;
+export const IconEdit = (p: P) => <I {...p}><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></I>;
+export const IconMail = (p: P) => <I {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></I>;
+export const IconHistory = (p: P) => <I {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></I>;
+export const IconPause = (p: P) => <I {...p}><circle cx="12" cy="12" r="9" /><path d="M10 9v6M14 9v6" /></I>;
+export const IconSignOut = (p: P) => <I {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></I>;
+export const IconTrash = (p: P) => <I {...p}><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></I>;
 export const IconZoom = (p: P) => <I {...p}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3M11 8v6M8 11h6" /></I>;
 export const IconSun = (p: P) => <I {...p}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></I>;
 export const IconMoon = (p: P) => <I {...p}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></I>;

@@ -3,6 +3,7 @@ package com.stm.middleware.backend.sim;
 import com.stm.middleware.backend.CardSystem;
 import com.stm.middleware.backend.Collections;
 import com.stm.middleware.backend.CoreBanking;
+import com.stm.middleware.backend.IdentityServices;
 import com.stm.middleware.common.Hashing;
 import com.stm.middleware.stm.core.Errors;
 import com.stm.middleware.stm.core.Ids;
@@ -33,18 +34,33 @@ import java.util.Optional;
 public class SimulatedBank implements CoreBanking, CardSystem, Collections {
     private static final SecureRandom RNG = new SecureRandom();
 
-    private static final RowMapper<Account> ACCOUNT = (rs, n) -> new Account(rs.getString("id"),
-            rs.getString("account_number"), rs.getString("customer_id"), rs.getString("type"),
-            rs.getString("product_code"), rs.getString("currency"), rs.getBigDecimal("ledger"),
-            rs.getBigDecimal("available"), rs.getString("branch"), rs.getString("status"), rs.getBoolean("card_eligible"));
+    /** An ACTIVE account with no customer activity for the dormancy period reads as DORMANT. */
+    private final RowMapper<Account> ACCOUNT = (rs, n) -> {
+        OffsetDateTime last = rs.getObject("last_activity_at", OffsetDateTime.class);
+        String status = rs.getString("status");
+        if ("ACTIVE".equals(status) && last != null && last.isBefore(OffsetDateTime.now().minusMonths(dormantAfterMonths()))) {
+            status = "DORMANT";
+        }
+        return new Account(rs.getString("id"),
+                rs.getString("account_number"), rs.getString("customer_id"), rs.getString("type"),
+                rs.getString("product_code"), rs.getString("currency"), rs.getBigDecimal("ledger"),
+                rs.getBigDecimal("available"), rs.getString("branch"), status, rs.getBoolean("card_eligible"),
+                last, rs.getString("status_reason"));
+    };
 
     private static final RowMapper<Customer> CUSTOMER = (rs, n) -> new Customer(rs.getString("id"),
             rs.getString("id_number"), rs.getString("full_name"), rs.getString("first_name"), rs.getString("mobile"),
             rs.getString("kra_pin"));
 
-    private static final RowMapper<Card> CARD = (rs, n) -> new Card(rs.getString("id"), rs.getString("customer_id"),
-            rs.getString("account_id"), rs.getString("masked_pan"), rs.getString("product"), effectiveStatus(rs.getString("status"),
-            rs.getString("expiry")), rs.getString("expiry"), rs.getInt("pin_tries_left"));
+    private static final RowMapper<Card> CARD = (rs, n) -> {
+        String status = effectiveStatus(rs.getString("status"), rs.getString("expiry"));
+        String reason = "TEMP_BLOCKED".equals(status) ? rs.getString("temp_blocked_reason") : rs.getString("blocked_reason");
+        OffsetDateTime at = "TEMP_BLOCKED".equals(status) ? rs.getObject("temp_blocked_at", OffsetDateTime.class)
+                : rs.getObject("blocked_at", OffsetDateTime.class);
+        return new Card(rs.getString("id"), rs.getString("customer_id"),
+                rs.getString("account_id"), rs.getString("masked_pan"), rs.getString("product"), status,
+                rs.getString("expiry"), rs.getInt("pin_tries_left"), reason, rs.getString("pin_hash") != null, at);
+    };
 
     private static final Map<String, Biller> BILLERS = Map.of(
             "522522", new Biller("522522", "Blue River Utilities", "GL-PAYBILL-522522"),
@@ -52,11 +68,16 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
 
     private final JdbcClient jdbc;
     private final SimControl control;
+    private final int dormantMonths;
 
-    public SimulatedBank(JdbcClient jdbc, SimControl control) {
+    public SimulatedBank(JdbcClient jdbc, SimControl control,
+                         @org.springframework.beans.factory.annotation.Value("${stm.accounts.dormant-after-months:12}") int dormantMonths) {
         this.jdbc = jdbc;
         this.control = control;
+        this.dormantMonths = Math.max(1, dormantMonths);
     }
+
+    private int dormantAfterMonths() { return dormantMonths; }
 
     // ================================================================== core banking
 
@@ -145,11 +166,12 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
     @Transactional
     public Posting debit(String accountId, BigDecimal amount, String currency, String narrative, String creditGl) {
         control.core();
-        Account a = lock(accountId);
+        Account a = lock(accountId, true);
         if (a.available().compareTo(amount) < 0) throw Errors.insufficientFunds(Money.of(a.available(), a.currency()));
         String ref = Ids.coreRef();
         BigDecimal after = a.ledger().subtract(amount);
         move(accountId, amount.negate());
+        jdbc.sql("UPDATE sim_accounts SET last_activity_at = now() WHERE id = :id").param("id", accountId).update();
         insert(ref, accountId, "DR", amount, currency, narrative, after, null);
         insert(ref, creditGl, "CR", amount, currency, narrative, null, null);
         return new Posting(ref, a.ledger(), after, OffsetDateTime.now());
@@ -159,7 +181,7 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
     @Transactional
     public Posting credit(String accountId, BigDecimal amount, String currency, String narrative, String debitGl) {
         control.core();
-        Account a = lock(accountId);
+        Account a = lock(accountId, false);
         String ref = Ids.coreRef();
         BigDecimal after = a.ledger().add(amount);
         move(accountId, amount);
@@ -228,15 +250,18 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
                 .param("g", gl).param("c", currency).query(BigDecimal.class).single();
     }
 
-    private Account lock(String accountId) {
+    /**
+     * Locks the account row and applies the status rules: money out needs ACTIVE; money in is also accepted on
+     * DORMANT and FROZEN accounts (it does not wake a dormant account); nothing moves on a CLOSED one.
+     */
+    private Account lock(String accountId, boolean debit) {
         Account a = jdbc.sql("SELECT * FROM sim_accounts WHERE id = :id FOR UPDATE").param("id", accountId)
                 .query(ACCOUNT).optional()
                 .orElseThrow(() -> Errors.notFound("ACCOUNT_NOT_FOUND", "Account not found", "Akaunti haikupatikana"));
-        if (!"ACTIVE".equals(a.status())) {
-            throw Errors.of(HttpStatus.FORBIDDEN, "ACCOUNT_RESTRICTED", "This account cannot be used here.",
-                    "Akaunti hii haiwezi kutumika hapa.", false);
-        }
-        return a;
+        if (a.active()) return a;
+        if (!debit && !"CLOSED".equals(a.status())) return a;
+        if (a.dormant()) throw Errors.accountDormant(a.id());
+        throw Errors.accountRestricted(a.status());
     }
 
     private void move(String accountId, BigDecimal delta) {
@@ -254,10 +279,127 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
                 .param("b", after).param("rev", reversalOf).update();
     }
 
+    // ================================================================== customer maintenance
+
+    @Override
+    @Transactional
+    public Account reactivate(String accountId, String reference) {
+        control.core();
+        Account a = jdbc.sql("SELECT * FROM sim_accounts WHERE id = :id FOR UPDATE").param("id", accountId)
+                .query(ACCOUNT).optional()
+                .orElseThrow(() -> Errors.notFound("ACCOUNT_NOT_FOUND", "Account not found", "Akaunti haikupatikana"));
+        if (a.active()) return a;
+        if (!a.dormant()) throw Errors.accountRestricted(a.status());
+        jdbc.sql("UPDATE sim_accounts SET status = 'ACTIVE', last_activity_at = now(), reactivated_at = now(), status_reason = NULL WHERE id = :id")
+                .param("id", accountId).update();
+        return account(accountId).orElseThrow();
+    }
+
+    @Override
+    public Optional<OffsetDateTime> mobileChangedAt(String customerId) {
+        control.core();
+        return jdbc.sql("SELECT mobile_changed_at FROM sim_customers WHERE id = :id").param("id", customerId)
+                .query((rs, n) -> Optional.ofNullable(rs.getObject(1, OffsetDateTime.class))).optional().flatMap(x -> x);
+    }
+
+    @Override
+    public boolean mobileInUse(String mobile, String exceptCustomerId) {
+        control.core();
+        return jdbc.sql("SELECT count(*) FROM sim_customers WHERE mobile = :m AND id <> :id")
+                .param("m", mobile).param("id", exceptCustomerId).query(Long.class).single() > 0;
+    }
+
+    @Override
+    @Transactional
+    public void changeMobile(String customerId, String newMobile, String channel, String reference) {
+        control.core();
+        String old = jdbc.sql("SELECT mobile FROM sim_customers WHERE id = :id FOR UPDATE").param("id", customerId)
+                .query(String.class).optional()
+                .orElseThrow(() -> Errors.notFound("CUSTOMER_NOT_FOUND", "Customer not found", "Mteja hakupatikana"));
+        jdbc.sql("UPDATE sim_customers SET mobile = :m, mobile_changed_at = now() WHERE id = :id")
+                .param("m", newMobile).param("id", customerId).update();
+        jdbc.sql("""
+                INSERT INTO sim_mobile_changes (customer_id, old_mobile, new_mobile, channel, reference)
+                VALUES (:c, :o, :n, :ch, :r)""")
+                .param("c", customerId).param("o", old).param("n", newMobile).param("ch", channel).param("r", reference).update();
+    }
+
+    @Override
+    public Biometrics biometrics(String customerId) {
+        control.core();
+        record Row(String finger, OffsetDateTime at, String source) {}
+        List<Row> rows = jdbc.sql("SELECT finger, enrolled_at, source FROM sim_biometrics WHERE customer_id = :c ORDER BY finger")
+                .param("c", customerId).query((rs, n) -> new Row(rs.getString(1), rs.getObject(2, OffsetDateTime.class), rs.getString(3))).list();
+        if (rows.isEmpty()) return new Biometrics(false, List.of(), null, null);
+        Row latest = rows.stream().max(java.util.Comparator.comparing(Row::at)).orElseThrow();
+        return new Biometrics(true, rows.stream().map(Row::finger).toList(), latest.at(), latest.source());
+    }
+
+    @Override
+    @Transactional
+    public Biometrics enrolBiometrics(String customerId, List<FingerTemplate> fingers, String source) {
+        control.core();
+        for (FingerTemplate f : fingers) {
+            jdbc.sql("""
+                    INSERT INTO sim_biometrics (customer_id, finger, template_sha256, quality, source)
+                    VALUES (:c, :f, :h, :q, :s)
+                    ON CONFLICT (customer_id, finger) DO UPDATE
+                      SET template_sha256 = excluded.template_sha256, quality = excluded.quality,
+                          source = excluded.source, enrolled_at = now()""")
+                    .param("c", customerId).param("f", f.finger())
+                    .param("h", Hashing.sha256Hex(f.template() == null ? new byte[0] : f.template()))
+                    .param("q", f.quality()).param("s", source).update();
+        }
+        return biometrics(customerId);
+    }
+
+    /** The simulator has no matcher: a readable print (quality 40+) of an enrolled finger matches. */
+    @Override
+    public Optional<IdentityServices.MatchResult> matchEnrolledFingerprint(String customerId, String finger, byte[] template, int quality) {
+        control.core();
+        long n = jdbc.sql("SELECT count(*) FROM sim_biometrics WHERE customer_id = :c AND finger = :f")
+                .param("c", customerId).param("f", finger).query(Long.class).single();
+        if (n == 0) return Optional.empty();
+        return Optional.of(quality < 40 ? new IdentityServices.MatchResult("NO_MATCH", 0.24) : new IdentityServices.MatchResult("MATCH", 0.97));
+    }
+
+    @Override
+    public Optional<Signature> signature(String customerId) {
+        control.core();
+        return jdbc.sql("""
+                SELECT id, captured_at, source FROM sim_signatures WHERE customer_id = :c AND status = 'ACTIVE'
+                ORDER BY captured_at DESC LIMIT 1""").param("c", customerId)
+                .query((rs, n) -> new Signature(rs.getString(1), rs.getObject(2, OffsetDateTime.class), rs.getString(3))).optional();
+    }
+
+    @Override
+    public Optional<SignatureImage> signatureImage(String customerId) {
+        control.core();
+        return jdbc.sql("""
+                SELECT image, mime_type FROM sim_signatures WHERE customer_id = :c AND status = 'ACTIVE'
+                ORDER BY captured_at DESC LIMIT 1""").param("c", customerId)
+                .query((rs, n) -> new SignatureImage(rs.getBytes(1), rs.getString(2))).optional();
+    }
+
+    @Override
+    @Transactional
+    public Signature registerSignature(String customerId, byte[] image, String mimeType, String source) {
+        control.core();
+        jdbc.sql("UPDATE sim_signatures SET status = 'SUPERSEDED' WHERE customer_id = :c AND status = 'ACTIVE'")
+                .param("c", customerId).update();
+        String id = Ids.next("sig");
+        jdbc.sql("""
+                INSERT INTO sim_signatures (id, customer_id, image, mime_type, sha256, source)
+                VALUES (:id, :c, :i, :m, :h, :s)""")
+                .param("id", id).param("c", customerId).param("i", image).param("m", mimeType)
+                .param("h", Hashing.sha256Hex(image)).param("s", source).update();
+        return signature(customerId).orElseThrow();
+    }
+
     // ================================================================== card system + HSM
 
     private static String effectiveStatus(String status, String expiry) {
-        if (("ACTIVE".equals(status) || "INACTIVE_PIN_REQUIRED".equals(status))
+        if (("ACTIVE".equals(status) || "INACTIVE_PIN_REQUIRED".equals(status) || "TEMP_BLOCKED".equals(status))
                 && YearMonth.parse(expiry).isBefore(YearMonth.now())) return "EXPIRED";
         return status;
     }
@@ -360,6 +502,55 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
                 UPDATE sim_cards SET status = 'BLOCKED', blocked_reason = :r, blocked_at = coalesce(blocked_at, now())
                 WHERE id = :id AND status <> 'DESTROYED'""")
                 .param("r", reason).param("id", cardId).update();
+        return card(cardId).orElseThrow(() -> Errors.notFound("CARD_NOT_FOUND", "Card not found", "Kadi haikupatikana"));
+    }
+
+    @Override
+    @Transactional
+    public Card temporaryBlock(String cardId, String reason) {
+        control.core();
+        int n = jdbc.sql("""
+                UPDATE sim_cards SET status = 'TEMP_BLOCKED', temp_blocked_at = now(), temp_blocked_reason = :r
+                WHERE id = :id AND status = 'ACTIVE'""").param("r", reason).param("id", cardId).update();
+        Card c = card(cardId).orElseThrow(() -> Errors.notFound("CARD_NOT_FOUND", "Card not found", "Kadi haikupatikana"));
+        if (n == 0 && !"TEMP_BLOCKED".equals(c.status())) {
+            throw Errors.wrongState("Only an active card can be blocked temporarily.").detail("cardStatus", c.status());
+        }
+        return c;
+    }
+
+    @Override
+    @Transactional
+    public Card unblock(String cardId) {
+        control.core();
+        int n = jdbc.sql("""
+                UPDATE sim_cards SET status = 'ACTIVE', temp_blocked_at = NULL, temp_blocked_reason = NULL
+                WHERE id = :id AND status = 'TEMP_BLOCKED'""").param("id", cardId).update();
+        Card c = card(cardId).orElseThrow(() -> Errors.notFound("CARD_NOT_FOUND", "Card not found", "Kadi haikupatikana"));
+        if (n == 0 && !"ACTIVE".equals(c.status())) {
+            throw Errors.wrongState("This card is not temporarily blocked.").detail("cardStatus", c.status());
+        }
+        return c;
+    }
+
+    @Override
+    @Transactional
+    public void changePin(String cardId, String newPinBlock, String format, String ksn) {
+        control.core();
+        String pin = DevPinBlock.decode(newPinBlock);
+        jdbc.sql("UPDATE sim_cards SET pin_hash = :h, pin_tries_left = 3, pin_changed_at = now() WHERE id = :id")
+                .param("h", Hashing.sha256Hex(cardId + ":" + pin)).param("id", cardId).update();
+    }
+
+    @Override
+    @Transactional
+    public Card resetPin(String cardId, String newPinBlock, String format, String ksn) {
+        control.core();
+        String pin = DevPinBlock.decode(newPinBlock);
+        jdbc.sql("""
+                UPDATE sim_cards SET pin_hash = :h, pin_tries_left = 3, pin_changed_at = now(),
+                       status = CASE WHEN status = 'PIN_LOCKED' THEN 'ACTIVE' ELSE status END
+                WHERE id = :id""").param("h", Hashing.sha256Hex(cardId + ":" + pin)).param("id", cardId).update();
         return card(cardId).orElseThrow(() -> Errors.notFound("CARD_NOT_FOUND", "Card not found", "Kadi haikupatikana"));
     }
 

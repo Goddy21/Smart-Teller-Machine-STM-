@@ -27,11 +27,13 @@ public class PortalSessionsController {
     private final Rows rows;
     private final JdbcClient jdbc;
     private final AuditService audit;
+    private final com.stm.middleware.backend.CoreBanking core;
 
-    public PortalSessionsController(Rows rows, JdbcClient jdbc, AuditService audit) {
+    public PortalSessionsController(Rows rows, JdbcClient jdbc, AuditService audit, com.stm.middleware.backend.CoreBanking core) {
         this.rows = rows;
         this.jdbc = jdbc;
         this.audit = audit;
+        this.core = core;
     }
 
     private static final String SESSION_COLUMNS = """
@@ -45,27 +47,58 @@ public class PortalSessionsController {
             (SELECT count(*) FROM fx_exchanges x WHERE x.session_id = s.id) AS fx_count,
             (SELECT count(*) FROM statements m WHERE m.session_id = s.id) AS statements_count,
             (SELECT count(*) FROM teller_calls c WHERE c.session_id = s.id) AS teller_calls_count,
+            (SELECT count(*) FROM service_events e WHERE e.session_id = s.id) AS service_events_count,
             EXISTS (SELECT 1 FROM applications a WHERE a.session_id = s.id
                     AND (a.status = 'REFERRED' OR (a.status = 'IDENTITY_CAPTURED' AND a.biometric_attempts >= 3))) AS needs_teller
             FROM stm_sessions s JOIN terminals t ON t.id = s.terminal_id""";
 
+    private static final String SESSIONS_FROM = " FROM stm_sessions s JOIN terminals t ON t.id = s.terminal_id";
+    private static final String NEEDS_TELLER = """
+            EXISTS (SELECT 1 FROM applications a WHERE a.session_id = s.id
+                    AND (a.status = 'REFERRED' OR (a.status = 'IDENTITY_CAPTURED' AND a.biometric_attempts >= 3)))""";
+
+    /**
+     * Newest first. view = teller | active | ended | all. q searches name, CIF, kiosk and session id across all sessions.
+     * With ?page= (from 1) and &size= the answer is a page {items, total, page, size, pages, counts}; without, a plain list.
+     */
     @GetMapping("/sessions")
-    public List<Map<String, Object>> sessions(@RequestParam(required = false) String status,
-                                              @RequestParam(required = false) String flow,
-                                              @RequestParam(required = false) String q,
-                                              @RequestParam(defaultValue = "200") int limit) {
-        StringBuilder sql = new StringBuilder("SELECT " + SESSION_COLUMNS + " WHERE 1 = 1");
+    public Object sessions(@RequestParam(required = false) String status,
+                           @RequestParam(required = false) String flow,
+                           @RequestParam(required = false) String q,
+                           @RequestParam(required = false) String view,
+                           @RequestParam(required = false) Integer page,
+                           @RequestParam(defaultValue = "50") int size,
+                           @RequestParam(defaultValue = "200") int limit) {
+        StringBuilder where = new StringBuilder(" WHERE 1 = 1");
         Map<String, Object> p = new HashMap<>();
-        if (status != null && !status.isBlank()) { sql.append(" AND s.status = :st"); p.put("st", status); }
-        if (flow != null && !flow.isBlank()) { sql.append(" AND s.flow = :f"); p.put("f", flow); }
+        if (status != null && !status.isBlank()) { where.append(" AND s.status = :st"); p.put("st", status); }
+        if (flow != null && !flow.isBlank()) { where.append(" AND s.flow = :f"); p.put("f", flow); }
         if (q != null && !q.isBlank()) {
-            sql.append(" AND (s.id ILIKE :q OR s.customer_name ILIKE :q OR s.customer_id ILIKE :q OR t.terminal_code ILIKE :q)");
+            where.append(" AND (s.id ILIKE :q OR s.customer_name ILIKE :q OR s.customer_id ILIKE :q OR t.terminal_code ILIKE :q)");
             p.put("q", "%" + q.trim() + "%");
         }
-        sql.append(" ORDER BY s.started_at DESC LIMIT :l");
-        p.put("l", Math.max(1, Math.min(limit, 1000)));
-        return rows.list(sql.toString(), p);
+        String base = where.toString();
+        String viewSql = switch (view == null ? "all" : view) {
+            case "teller" -> " AND " + NEEDS_TELLER;
+            case "active" -> " AND s.status = 'ACTIVE'";
+            case "ended" -> " AND s.status <> 'ACTIVE'";
+            default -> "";
+        };
+        String select = "SELECT " + SESSION_COLUMNS + base + viewSql + " ORDER BY s.started_at DESC, s.id DESC";
+        if (page == null) {
+            p.put("l", Math.max(1, Math.min(limit, 1000)));
+            return rows.list(select + " LIMIT :l", p);
+        }
+        Rows.Page pg = rows.page("SELECT count(*)" + SESSIONS_FROM + base + viewSql, select, p, page, size);
+        Map<String, Object> c = rows.one("""
+                SELECT count(*) FILTER (WHERE %s) AS teller, count(*) FILTER (WHERE s.status = 'ACTIVE') AS active,
+                       count(*) FILTER (WHERE s.status <> 'ACTIVE') AS ended, count(*) AS all_sessions""".formatted(NEEDS_TELLER)
+                + SESSIONS_FROM + base, p).orElseThrow();
+        return pg.withCounts(Map.of("teller", num(c.get("teller")), "active", num(c.get("active")),
+                "ended", num(c.get("ended")), "all", num(c.get("allSessions"))));
     }
+
+    private static long num(Object o) { return o instanceof Number n ? n.longValue() : 0L; }
 
     @GetMapping("/sessions/{id}")
     public Map<String, Object> session(@PathVariable String id) {
@@ -99,6 +132,11 @@ public class PortalSessionsController {
                 SELECT x.id, x.currency, x.rate, x.destination_type, x.account_id, x.status, x.foreign_total, x.local_amount,
                        x.transaction_ref, x.serials AS serials_json, x.created_at
                 FROM fx_exchanges x WHERE x.session_id = :s ORDER BY x.created_at""", p));
+        // PIN changes, card freezes, reactivations, phone-number changes, enrolments and signatures in this session.
+        s.put("serviceEvents", rows.list("""
+                SELECT id, kind, subject, detail AS detail_json, reference, created_at
+                FROM service_events WHERE session_id = :s ORDER BY created_at""", p));
+        if (s.get("customerId") != null) s.put("customerRecord", customerRecord(s.get("customerId").toString()));
         s.put("statements", rows.list("""
                 SELECT id, account_id, type, period_months, fee, fee_ref, pages, reference, created_at
                 FROM statements WHERE session_id = :s ORDER BY created_at""", p));
@@ -124,6 +162,56 @@ public class PortalSessionsController {
 
     // ------------------------------------------------------------------ captures (audited)
 
+    /** What core banking holds to recognise the customer: fingerprints, specimen signature, phone-number history. */
+    private Map<String, Object> customerRecord(String customerId) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        try {
+            var bio = core.biometrics(customerId);
+            var sig = core.signature(customerId);
+            out.put("biometricsEnrolled", bio.enrolled());
+            out.put("fingers", bio.fingers());
+            out.put("biometricsSource", bio.source());
+            out.put("biometricsEnrolledAt", bio.enrolledAt());
+            out.put("signatureOnFile", sig.isPresent());
+            out.put("signatureSource", sig.map(com.stm.middleware.backend.CoreBanking.Signature::source).orElse(null));
+            out.put("signatureCapturedAt", sig.map(com.stm.middleware.backend.CoreBanking.Signature::capturedAt).orElse(null));
+            out.put("mobileChangedAt", core.mobileChangedAt(customerId).orElse(null));
+        } catch (RuntimeException e) {
+            out.put("unavailable", true);      // core banking is down: the session still opens
+        }
+        return out;
+    }
+
+    /** The specimen signature core banking holds for a customer. Every view is recorded under the signed-in user. */
+    @GetMapping("/customers/{customerId}/signature")
+    public ResponseEntity<byte[]> signature(@AuthenticationPrincipal PortalUser user, @PathVariable String customerId) {
+        var img = core.signatureImage(customerId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "SIGNATURE_NOT_FOUND", "No specimen signature on file"));
+        audit.record("DOCUMENT_VIEWED", "customer:" + customerId, null, Map.of("kind", "SPECIMEN_SIGNATURE",
+                "by", user == null ? "portal-key" : user.username()));
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(img.mimeType())).header("Cache-Control", "no-store").body(img.content());
+    }
+
+    /**
+     * Card and account changes customers made at the kiosks, newest first: PIN changes and resets, card freezes,
+     * reactivations, phone-number changes, enrolments, signatures. kind filters; q searches customer, subject, reference.
+     */
+    @GetMapping("/service-events")
+    public Object serviceEvents(@RequestParam(required = false) String kind, @RequestParam(required = false) String q,
+                                @RequestParam(required = false) Integer page, @RequestParam(defaultValue = "50") int size) {
+        Map<String, Object> p = new HashMap<>();
+        p.put("k", kind == null || kind.isBlank() ? null : kind);
+        p.put("q", q == null || q.isBlank() ? null : "%" + q.trim() + "%");
+        String from = " FROM service_events e JOIN terminals t ON t.id = e.terminal_id JOIN stm_sessions s ON s.id = e.session_id"
+                + " WHERE (CAST(:k AS VARCHAR) IS NULL OR e.kind = :k)"
+                + " AND (CAST(:q AS VARCHAR) IS NULL OR s.customer_name ILIKE :q OR e.customer_id ILIKE :q OR e.subject ILIKE :q"
+                + " OR e.reference ILIKE :q OR t.terminal_code ILIKE :q)";
+        String select = "SELECT e.id, e.session_id, t.terminal_code, e.customer_id, s.customer_name, e.kind, e.subject,"
+                + " e.detail AS detail_json, e.reference, e.created_at" + from + " ORDER BY e.created_at DESC, e.id DESC";
+        if (page == null) return rows.list(select + " LIMIT 200", p);
+        return rows.page("SELECT count(*)" + from, select, p, page, size);
+    }
+
     /** An ID image, face, registry photo or signature. Every view is recorded under the signed-in user. */
     @GetMapping("/captures/{id}")
     public ResponseEntity<byte[]> capture(@AuthenticationPrincipal PortalUser user, @PathVariable UUID id) {
@@ -138,23 +226,41 @@ public class PortalSessionsController {
 
     // ------------------------------------------------------------------ applications
 
+    /**
+     * Most recently changed first. view = teller (a kiosk is waiting) | open (in progress) | opened | all.
+     * q searches name, account number, application id and kiosk. ?page= gives a page, as for /sessions.
+     */
     @GetMapping("/applications")
-    public List<Map<String, Object>> applications(@RequestParam(required = false) String status,
-                                                  @RequestParam(defaultValue = "false") boolean needsTeller,
-                                                  @RequestParam(defaultValue = "200") int limit) {
-        StringBuilder sql = new StringBuilder("""
+    public Object applications(@RequestParam(required = false) String status,
+                               @RequestParam(defaultValue = "false") boolean needsTeller,
+                               @RequestParam(required = false) String view,
+                               @RequestParam(required = false) String q,
+                               @RequestParam(required = false) Integer page,
+                               @RequestParam(defaultValue = "50") int size,
+                               @RequestParam(defaultValue = "200") int limit) {
+        StringBuilder where = new StringBuilder(" FROM applications a JOIN terminals t ON t.id = a.terminal_id WHERE 1 = 1");
+        Map<String, Object> p = new HashMap<>();
+        if (status != null && !status.isBlank()) { where.append(" AND a.status = :st"); p.put("st", status); }
+        String v = needsTeller ? "teller" : view == null ? "all" : view;
+        switch (v) {
+            case "teller" -> where.append(" AND (a.status = 'REFERRED' OR (a.status = 'IDENTITY_CAPTURED' AND a.biometric_attempts >= 3)) AND a.expires_at > now()");
+            case "open" -> where.append(" AND a.status NOT IN ('ACCOUNT_OPENED', 'CANCELLED', 'REJECTED', 'EXPIRED')");
+            case "opened" -> where.append(" AND a.status = 'ACCOUNT_OPENED'");
+            default -> { }
+        }
+        if (q != null && !q.isBlank()) {
+            where.append(" AND (a.full_name ILIKE :q OR a.account_number ILIKE :q OR a.id ILIKE :q OR t.terminal_code ILIKE :q OR a.customer_id ILIKE :q)");
+            p.put("q", "%" + q.trim() + "%");
+        }
+        String select = """
                 SELECT a.id, a.session_id, t.terminal_code, a.product_code, a.status, a.full_name, a.referral_status,
                        a.teller_override, a.biometric_attempts, a.identity_attempts, a.account_number, a.customer_id,
-                       a.created_at, a.updated_at, a.expires_at
-                FROM applications a JOIN terminals t ON t.id = a.terminal_id WHERE 1 = 1""");
-        Map<String, Object> p = new HashMap<>();
-        if (status != null && !status.isBlank()) { sql.append(" AND a.status = :st"); p.put("st", status); }
-        if (needsTeller) {
-            sql.append(" AND (a.status = 'REFERRED' OR (a.status = 'IDENTITY_CAPTURED' AND a.biometric_attempts >= 3)) AND a.expires_at > now()");
+                       a.created_at, a.updated_at, a.expires_at""" + where + " ORDER BY a.updated_at DESC, a.id DESC";
+        if (page == null) {
+            p.put("l", Math.max(1, Math.min(limit, 1000)));
+            return rows.list(select + " LIMIT :l", p);
         }
-        sql.append(" ORDER BY a.updated_at DESC LIMIT :l");
-        p.put("l", Math.max(1, Math.min(limit, 1000)));
-        return rows.list(sql.toString(), p);
+        return rows.page("SELECT count(*) " + where, select, p, page, size);
     }
 
     @GetMapping("/applications/{id}")

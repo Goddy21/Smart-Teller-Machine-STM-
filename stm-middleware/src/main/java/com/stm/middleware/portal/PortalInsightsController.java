@@ -188,27 +188,37 @@ public class PortalInsightsController {
         return out;
     }
 
+    /** Newest first; ref matches part of a reference. ?page= gives a page, as for /sessions. */
     @GetMapping("/device-journal")
-    public List<Map<String, Object>> deviceJournal(@RequestParam(required = false) String terminal,
-                                                   @RequestParam(required = false) String ref,
-                                                   @RequestParam(defaultValue = "200") int limit) {
-        StringBuilder sql = new StringBuilder("""
-                SELECT t.terminal_code, j.seq, j.at, j.event, j.ref, j.payload AS data_json, j.signature_valid, j.received_at
-                FROM device_journal j JOIN terminals t ON t.id = j.terminal_id WHERE 1 = 1""");
+    public Object deviceJournal(@RequestParam(required = false) String terminal,
+                                @RequestParam(required = false) String ref,
+                                @RequestParam(required = false) Integer page,
+                                @RequestParam(defaultValue = "50") int size,
+                                @RequestParam(defaultValue = "200") int limit) {
+        StringBuilder from = new StringBuilder(" FROM device_journal j JOIN terminals t ON t.id = j.terminal_id WHERE 1 = 1");
         Map<String, Object> p = new HashMap<>();
-        if (terminal != null && !terminal.isBlank()) { sql.append(" AND t.terminal_code = :t"); p.put("t", terminal); }
-        if (ref != null && !ref.isBlank()) { sql.append(" AND j.ref = :r"); p.put("r", ref); }
-        sql.append(" ORDER BY j.at DESC LIMIT :l");
-        p.put("l", Math.max(1, Math.min(limit, 1000)));
-        return rows.list(sql.toString(), p);
+        if (terminal != null && !terminal.isBlank()) { from.append(" AND t.terminal_code = :t"); p.put("t", terminal); }
+        if (ref != null && !ref.isBlank()) { from.append(" AND j.ref ILIKE :r"); p.put("r", "%" + ref.trim() + "%"); }
+        String select = "SELECT t.terminal_code, j.seq, j.at, j.event, j.ref, j.payload AS data_json, j.signature_valid, j.received_at"
+                + from + " ORDER BY j.at DESC, j.terminal_id, j.seq DESC";
+        if (page == null) {
+            p.put("l", Math.max(1, Math.min(limit, 1000)));
+            return rows.list(select + " LIMIT :l", p);
+        }
+        return rows.page("SELECT count(*) " + from, select, p, page, size);
     }
 
+    /** Newest first. ?page= gives a page, as for /sessions. */
     @GetMapping("/sms")
-    public List<Map<String, Object>> sms(@RequestParam(defaultValue = "100") int limit) {
-        return rows.list("""
+    public Object sms(@RequestParam(required = false) Integer page,
+                      @RequestParam(defaultValue = "50") int size,
+                      @RequestParam(defaultValue = "100") int limit) {
+        String select = """
                 SELECT id, session_id, template, regexp_replace(mobile, '^(\\+2547)\\d{5}', '\\1•••••') AS mobile,
                        language, body, status, created_at
-                FROM sms_messages ORDER BY created_at DESC LIMIT :l""", Map.of("l", Math.max(1, Math.min(limit, 500))));
+                FROM sms_messages ORDER BY created_at DESC, id DESC""";
+        if (page == null) return rows.list(select + " LIMIT :l", Map.of("l", Math.max(1, Math.min(limit, 500))));
+        return rows.page("SELECT count(*) FROM sms_messages", select, Map.of(), page, size);
     }
 
     // ------------------------------------------------------------------ audit journal

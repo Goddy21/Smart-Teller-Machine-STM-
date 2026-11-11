@@ -1,3 +1,4 @@
+import type { Page } from "../ui/kit";
 import { ApiError, request, send, readSse } from "./http";
 import { bearer, type Role } from "../auth";
 
@@ -30,6 +31,7 @@ export interface SessionRow {
   withdrawalsCount: number;
   fxCount: number;
   statementsCount: number;
+  serviceEventsCount: number;
   tellerCallsCount: number;
   needsTeller: boolean;
 }
@@ -101,7 +103,21 @@ export interface CardOrder {
   terminalCode?: string; sessionId?: string; customerId?: string; customerName?: string | null; applicationId?: string | null;
 }
 
+/** A change a customer made at a kiosk: PIN change or reset, card freeze, reactivation, phone number, enrolment, signature. */
+export interface ServiceEvent {
+  id: string; kind: string; subject: string | null; detail: Record<string, unknown> | null; reference: string | null; createdAt: string;
+  sessionId?: string; terminalCode?: string; customerId?: string; customerName?: string | null;
+}
+/** What core banking holds to recognise the customer. */
+export interface CustomerRecord {
+  unavailable?: boolean;
+  biometricsEnrolled?: boolean; fingers?: string[]; biometricsSource?: string | null; biometricsEnrolledAt?: string | null;
+  signatureOnFile?: boolean; signatureSource?: string | null; signatureCapturedAt?: string | null; mobileChangedAt?: string | null;
+}
+
 export interface SessionDetail extends SessionRow {
+  serviceEvents: ServiceEvent[];
+  customerRecord?: CustomerRecord;
   applications: Application[];
   verifications: {
     id: string; applicationId: string | null; purpose: string; documentType: string; country: string; result: string;
@@ -230,24 +246,55 @@ export interface Simulator {
 }
 export interface SimCustomer {
   id: string; idNumber: string; fullName: string; mobile: string; kraPin: string | null; branch: string; createdAt: string;
-  accounts: { id: string; number: string; type: string; available: number; ledger: number; currency: string; status: string }[] | null;
-  cards: { id: string; maskedPan: string; product: string; status: string; expiry: string; accountId: string }[] | null;
+  customerSince: string | null; mobileChangedAt: string | null; fingersEnrolled: number; signatureSource: string | null;
+  accounts: { id: string; number: string; type: string; available: number; ledger: number; currency: string; status: string;
+              statusReason: string | null; lastActivityAt: string | null }[] | null;
+  cards: { id: string; maskedPan: string; product: string; status: string; reason: string | null; expiry: string; accountId: string }[] | null;
 }
 
 const BASE = "/api/v1/portal";
 
+export interface EmailRow {
+  id: number;
+  to: string;
+  subject: string;
+  body: string | null;
+  purpose: string;
+  status: "SENT" | "FAILED" | "SIMULATED";
+  error: string | null;
+  createdAt: string;
+}
+
 export interface PortalUserRow {
   username: string;
   displayName: string;
+  email: string | null;
   role: Role;
   branchCode: string | null;
   languages: string[];
-  status: "ACTIVE" | "DISABLED";
+  status: "ACTIVE" | "DISABLED" | "ARCHIVED";
   mustChangePassword: boolean;
   locked: boolean;
   lastLoginAt: string | null;
   createdAt: string;
   createdBy: string | null;
+  activeSessions: number;
+  archivedAt: string | null;
+}
+
+/** temporaryPassword is null when it was emailed (emailedTo); emailError when emailing failed and it is shown instead. */
+export interface UserCreated {
+  user: PortalUserRow;
+  temporaryPassword: string | null;
+  emailedTo: string | null;
+  emailError: string | null;
+}
+
+export interface UserActivity {
+  at: string;
+  event: string;
+  subject: string;
+  details: Record<string, unknown>;
 }
 
 /**
@@ -292,13 +339,20 @@ export class PortalApi {
     return this.guard(request<T>(`${BASE}${path}`, { method: "PUT", body, headers: this.h() }));
   }
 
+  private del<T>(path: string) {
+    return this.guard(request<T>(`${BASE}${path}`, { method: "DELETE", headers: this.h() }));
+  }
+
   overview() { return this.get<Overview>("/overview"); }
 
   sessions(q: { status?: string; flow?: string; q?: string } = {}) { return this.get<SessionRow[]>("/sessions", q); }
+  /** One page of sessions; counts holds the totals for the teller / active / ended / all tabs. */
+  sessionsPage(q: { flow?: string; q?: string; view?: string; page: number; size: number }) { return this.get<Page<SessionRow>>("/sessions", q); }
   session(id: string) { return this.get<SessionDetail>(`/sessions/${encodeURIComponent(id)}`); }
   timeline(id: string) { return this.get<TimelineEntry[]>(`/sessions/${encodeURIComponent(id)}/timeline`); }
 
   applications(q: { status?: string; needsTeller?: boolean } = {}) { return this.get<ApplicationRow[]>("/applications", q); }
+  applicationsPage(q: { view?: string; q?: string; page: number; size: number }) { return this.get<Page<ApplicationRow>>("/applications", q); }
   application(id: string) { return this.get<Application>(`/applications/${encodeURIComponent(id)}`); }
   /** The middleware records the signed-in user as the one who decided. */
   decide(id: string, decision: Decision, notes?: string) {
@@ -322,12 +376,24 @@ export class PortalApi {
   }
 
   transactions(q: { kind?: string; status?: string } = {}) { return this.get<TxRow[]>("/transactions", q); }
+  transactionsPage(q: { kind?: string; q?: string; page: number; size: number }) { return this.get<Page<TxRow>>("/transactions", q); }
+  /** Today's totals and open exceptions over all transactions. */
+  transactionsSummary() { return this.get<{ depositedToday: number; withdrawnToday: number; fxToday: number; exceptions: number }>("/transactions/summary"); }
   postings(coreRefs: string) { return this.get<Posting[]>("/postings", { refs: coreRefs }); }
   cardOrders(status?: string) { return this.get<CardOrder[]>("/card-orders", { status }); }
+  cardOrdersPage(q: { status?: string; q?: string; page: number; size: number }) { return this.get<Page<CardOrder>>("/card-orders", q); }
+  serviceEventsPage(q: { kind?: string; q?: string; page: number; size: number }) { return this.get<Page<ServiceEvent>>("/service-events", q); }
+  /** The customer's specimen signature as an object URL. Every view is audited. */
+  async signatureUrl(customerId: string): Promise<string> {
+    const res = await this.guard(send(`${BASE}/customers/${encodeURIComponent(customerId)}/signature`, { headers: this.h() }));
+    return URL.createObjectURL(await res.blob());
+  }
 
   reconciliation() { return this.get<Reconciliation>("/reconciliation"); }
   deviceJournal(q: { terminal?: string; ref?: string } = {}) { return this.get<DeviceJournalRow[]>("/device-journal", q); }
+  deviceJournalPage(q: { ref?: string; page: number; size: number }) { return this.get<Page<DeviceJournalRow>>("/device-journal", q); }
   sms() { return this.get<SmsRow[]>("/sms"); }
+  smsPage(q: { page: number; size: number }) { return this.get<Page<SmsRow>>("/sms", q); }
 
   verifyAudit() { return this.get<VerifyResult>("/audit/verify"); }
   journal(q: { entityId?: string; eventType?: string; beforeSeq?: number; limit?: number }) {
@@ -346,14 +412,22 @@ export class PortalApi {
   simGl() { return this.get<{ gl: string; currency: string; balance: number; postings: number }[]>("/simulator/gl"); }
 
   // ---- account administration (ADMIN)
-  users() { return this.get<PortalUserRow[]>("/users"); }
-  createUser(u: { username: string; displayName: string; role: Role; branchCode?: string; languages: string[] }) {
-    return this.post<{ user: PortalUserRow; temporaryPassword: string }>("/users", u);
+  users(includeArchived = false) { return this.get<PortalUserRow[]>("/users", includeArchived ? { includeArchived: "true" } : undefined); }
+  createUser(u: { username: string; displayName: string; email?: string; role: Role; branchCode?: string; languages: string[]; sendEmail?: boolean }) {
+    return this.post<UserCreated>("/users", u);
   }
-  updateUser(username: string, u: Partial<{ displayName: string; role: Role; branchCode: string; languages: string[]; status: "ACTIVE" | "DISABLED" }>) {
+  removeUser(username: string) {
+    return this.del<{ username: string; outcome: "DELETED" | "ARCHIVED"; message: string }>(`/users/${encodeURIComponent(username)}`);
+  }
+  signOutUser(username: string) { return this.post<{ sessionsEnded: number }>(`/users/${encodeURIComponent(username)}/sign-out`); }
+  userActivity(username: string) { return this.get<UserActivity[]>(`/users/${encodeURIComponent(username)}/activity`); }
+  updateUser(username: string, u: Partial<{ displayName: string; email: string; role: Role; branchCode: string; languages: string[]; status: "ACTIVE" | "DISABLED" }>) {
     return this.put<PortalUserRow>(`/users/${encodeURIComponent(username)}`, u);
   }
-  resetPassword(username: string) {
-    return this.post<{ temporaryPassword: string }>(`/users/${encodeURIComponent(username)}/reset-password`);
+  emails(q: { page: number; size: number }) {
+    return this.get<{ live: boolean; emails: EmailRow[]; total: number; page: number; size: number; pages: number }>("/users/emails", q);
+  }
+  resetPassword(username: string, sendEmail = false) {
+    return this.post<UserCreated>(`/users/${encodeURIComponent(username)}/reset-password`, { sendEmail });
   }
 }

@@ -19,7 +19,7 @@
 #>
 param(
     [string]$Base = "http://localhost:8080",
-    [ValidateSet("All", "AccountOpening", "Referral", "FaceFail", "CardServices", "Withdrawal", "Deposit", "Forex", "Statement", "TellerCall")]
+    [ValidateSet("All", "AccountOpening", "Referral", "FaceFail", "CardServices", "CardCare", "ExistingCustomer", "Withdrawal", "Deposit", "Forex", "Statement", "TellerCall")]
     [string]$Flow = "All",
     [string]$PortalKey = "dev-portal-key",
     [string]$ProvisioningSecret = "dev-provisioning-secret",
@@ -28,6 +28,8 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABMsehoQAAAABJRU5ErkJggg=="
+# A small signature drawing: the gateway refuses an empty or scribbled-over signature pad (SIGNATURE_UNREADABLE).
+$sig = "iVBORw0KGgoAAAANSUhEUgAAAUAAAAB4CAAAAACmpXQCAAAEGklEQVR42u3cC67jIAwFUBZx979VZjQatU3BYBs7Ic1Fmk/1ntrklI8xhFJZlkohAQEJSEACshCQgAQkIAsBCUhAArIQkIAEJCALAQlIQAKyEJCABCTg+QV/CwHX/Ai4CggCrvndQ5CAPwr4/y8C+ofgm1TBpwAe3y2wgyi7tuDYNvzVpwZ2sY8CRPfVxoC+y0Q8ILqA2B0Qy4AIBsT7A+4DCGcLDqyCx1EJiAyTyn7hcBZg/x8Cmkalj7Z7KaAKxhnNIQ2w7QqvAlTVLPgBg5OCh6/k+OJSQGg7Hi9gTQKsVwNCC+i5TKQATv9/OuD0071dTfgdym9zJeC8ZnmHgt0AZ/d5CiD8gMgFRF2NN8pKWJoA2KSdQsIpN+C8ty+rcb1wK8fRLgkQ2njK/JNswOZWmw9aAKz7ASID8Ctgg1h3TG1YrMeXACryNsUflg4TbE5AWACVaalVwJoPiPZWnNHIN0cAIIaAUNgPf60sBAVfA604TbIBquuIcq44eQvzcBkLCOGDpAHFGnF89xLW2wsBrNmAnVlbICAGgDUdcHoDK4BN05VSeRbASSpvHA3cARBdQHmAtiwToQuIJhU6/LA4QFVqtyxNLNGuFw4AB1EbIISsh0qO7kRZEeucDDi7IDlQl1rVK+AQbkf0+8hcQBzb9dfrvdXBtxAOCAlQNqoYA75/0s+23hiwt+ek+3kvhDESJrPRfqS51koXFxeKvdvFdO4l9GVS1IaZQK8zygdEFuDa5FEAVC4B9vv1NEDFJQYDzvM/cqjiXzTOB6xWQJwI6Ep3QZn6hzZSiQSs64CWL92VsRYBYV4UUO9pPQWwngc4yDkgBrDGA6q3dFTvOK5rw8K0uO1BTIAYDLzSZZboVQRzxsAOCDlzDWlupB1qxfB8a0DXZkmpZ0S17H+BtLLTaygwAPqXopMB++P8YWixrAh2FnYwS00qsjGpu0mSANEboi1rdu+Mxzg1uQMgFip1N1ASAC2Lns4NwEXXtYbu9jEFaspACd0pswPQujG0aNL2hus5AVBOSPQwzKu0sO3tLrpNsVsB6h5FMgJCjiVDAJG1Xy9qJ3kvMaliSAH86kRin6yo8G6cSXngs/1V09MZKsDoB1Djt0H7tiFL1pYbLapNDdBfz0aASoe1J+d0gMGnGJwAWE2ACAesnSXzOwImPhM5B0Q7UQx//j7xYAT9BacBImHHfNbzhCvzzqW6UXIq9g6A9dpTO1KPvgl+YnLPY09wQvPCLwPWcw7mIOAuJ5s8DhAEfMrxWFueXLQP4GvG4Jvul988IvADBJMX962BcJwGoJV5wPF3AAzV5N+f5/SBOplfGEIsgMEN6HGAeO5Z2zwKnoAEJCALAQlIQAKyEJCABCQgCwEJSEACshCQgAQkIAFJsFb+AObKsxxI8q37AAAAAElFTkSuQmCC"
 $script:session = $null
 $script:customer = $null
 
@@ -127,7 +129,7 @@ function Phone-Sign-Submit($a, [string]$NameOnCard) {
     $otp = Gw Post "/otp/send" @{ purpose = "ONBOARDING_PHONE"; applicationId = $a.app; channel = "SMS" }
     Gw Post "/otp/verify" @{ otpRef = $otp.otpRef; code = "123456" } | Out-Null
     Say "B-9/B-10 code sent to $($otp.maskedMobile) and verified"
-    Gw Post "/onboarding/applications/$($a.app)/signature" @{ image = $png; strokes = 14; capturedWith = "STYLUS" } | Out-Null
+    Gw Post "/onboarding/applications/$($a.app)/signature" @{ image = $sig; strokes = 14; capturedWith = "STYLUS" } | Out-Null
     $acc = Gw Post "/onboarding/applications/$($a.app)/submit" @{ cardProduct = "CLASSIC"; nameOnCard = $NameOnCard } -Idem (Key)
     $script:customer = $acc.customerToken
     Ok "B-11/B-12 signed, account $($acc.account.display) opened for $($acc.customerId) ($($acc.reference))"
@@ -220,6 +222,77 @@ function Flow-CardServices {
     $q = Gw Post "/fees/quote" @{ service = "CARD_ISSUE"; cardProduct = "GOLD"; debitAccountId = $target.accountId } -Customer
     Say "C-4 fee: $(($q.lines | ForEach-Object { "$($_.label) $($_.amount)" }) -join ' + ') = KES $($q.total.amount)"
     Issue-Card @{ service = "LINK_AND_ISSUE"; accountId = $target.accountId; cardProduct = "GOLD"; nameOnCard = "ACHIENG W OTIENO"; feeQuoteId = $q.quoteId; customerAuthorised = $true } "7391"
+    End-Session
+}
+
+# Code to the phone + thumbprint (C-1, B-9, B-10, B-5): the strong check that PIN reset, unblock, reactivation,
+# enrolment and signature changes need.
+function Verify-Customer([string]$IdNumber) {
+    $lk = Gw Post "/customers/lookup" @{ by = "ID_DOCUMENT"; documentType = "NATIONAL_ID"; documentNumber = $IdNumber }
+    $otp = Gw Post "/otp/send" @{ purpose = "CARD_SERVICES"; lookupRef = $lk.lookupRef; channel = "SMS" }
+    Gw Post "/otp/verify" @{ otpRef = $otp.otpRef; code = "123456" } | Out-Null
+    $b = Gw Post "/identity/biometrics/verify" @{ customerId = $lk.customerId; lookupRef = $lk.lookupRef; fingerprint = @{ finger = "RIGHT_THUMB"; template = $png; quality = 80 } }
+    $script:customer = $b.customerToken
+    Ok "C-1 $($lk.displayName): code + thumbprint matched against $($b.fingerprint.against)"
+    return $lk.customerId
+}
+
+function Flow-CardCare {
+    Step "Looking after cards: Mary (ID 25567890) has five cards in different states"
+    Start-Session
+    $cif = Verify-Customer "25567890"
+    $cards = (Gw Get "/customers/$cif/cards" -Customer).cards
+    $cards | ForEach-Object { Say ("P-1 {0} {1}: {2} -> {3}" -f $_.maskedPan, $_.product, $_.statusText, ($_.actions -join ", ")) }
+    $frozen = $cards | Where-Object { $_.status -eq "TEMP_BLOCKED" } | Select-Object -First 1
+    if ($frozen) {
+        $u = Gw Post "/cards/$($frozen.cardId)/unblock" $null -Customer
+        Ok "P-5 unblocked $($u.maskedPan) -> $($u.status) ($($u.reference))"
+        $t = Gw Post "/cards/$($frozen.cardId)/temporary-block" @{ reason = "MISPLACED" } -Customer
+        Ok "P-4 blocked it temporarily again -> $($t.status)"
+    }
+    $damaged = $cards | Where-Object { $_.status -eq "BLOCKED" } | Select-Object -First 1
+    if ($damaged) {
+        try { Gw Post "/cards/$($damaged.cardId)/unblock" $null -Customer | Out-Null } catch [StmError] { Warn "P-5 $($damaged.maskedPan): $($_.Exception.Code) -> $($_.Exception.Details.nextStep)" }
+    }
+    $locked = $cards | Where-Object { $_.status -eq "PIN_LOCKED" } | Select-Object -First 1
+    if ($locked) {
+        $r = Gw Post "/cards/$($locked.cardId)/pin/reset" @{ newPinBlock = (PinBlock "8642"); format = "ISO_9564_FORMAT_4"; confirmed = $true } -Customer
+        Ok "P-3 PIN reset on locked card $($r.maskedPan) -> $($r.status)"
+    }
+    $active = $cards | Where-Object { $_.status -eq "ACTIVE" } | Select-Object -First 1
+    try { Gw Post "/cards/$($active.cardId)/pin/change" @{ currentPinBlock = (PinBlock "0000"); newPinBlock = (PinBlock "9731"); confirmed = $true } -Customer | Out-Null }
+    catch [StmError] { Warn "P-2 wrong current PIN: $($_.Exception.Code), $($_.Exception.Details.attemptsLeft) attempts left" }
+    foreach ($pin in @("2468", "9731")) {      # 2468 on a fresh database, 9731 after an earlier run
+        try {
+            $new = if ($pin -eq "2468") { "9731" } else { "2468" }
+            $c = Gw Post "/cards/$($active.cardId)/pin/change" @{ currentPinBlock = (PinBlock $pin); newPinBlock = (PinBlock $new); confirmed = $true } -Customer
+            Ok "P-2 PIN changed on $($c.maskedPan) ($($c.reference))"; break
+        } catch [StmError] { if ($_.Exception.Code -ne "PIN_INCORRECT") { throw } }
+    }
+    End-Session
+}
+
+function Flow-ExistingCustomer {
+    Step "A customer from before the Smart Teller: Mary has a dormant account, no fingerprints and no signature on file"
+    Start-Session
+    $cif = Verify-Customer "25567890"
+    $p = Gw Get "/customers/$cif/profile" -Customer
+    Say "M-1 fingerprints enrolled: $($p.biometrics.enrolled), signature on file: $($p.signature.onFile), dormant accounts: $($p.accounts.dormant)"
+    Say "M-1 the kiosk should offer: $($p.suggestions -join ', ')"
+    (Gw Get "/customers/$cif/accounts" -Customer).accounts | ForEach-Object { Say ("    {0} {1} {2} {3}" -f $_.type, $_.masked, $_.status, $_.nextStep) }
+    $dormant = (Gw Get "/customers/$cif/accounts" -Customer).accounts | Where-Object { $_.status -eq "DORMANT" } | Select-Object -First 1
+    if ($dormant) {
+        $r = Gw Post "/accounts/$($dormant.accountId)/reactivate" @{ confirmed = $true } -Customer
+        Ok "M-2 $($r.masked) reactivated -> $($r.status) ($($r.reference))"
+    } else { Say "M-2 no dormant account left (already reactivated in an earlier run)" }
+    $frozen = (Gw Get "/customers/$cif/accounts" -Customer).accounts | Where-Object { $_.status -eq "FROZEN" } | Select-Object -First 1
+    if ($frozen) { try { Gw Post "/accounts/$($frozen.accountId)/reactivate" @{ confirmed = $true } -Customer | Out-Null } catch [StmError] { Warn "M-2 frozen $($frozen.masked): $($_.Exception.Code) -> teller" } }
+    $e = Gw Post "/customers/$cif/biometrics/enrol" @{ consent = $true; fingerprints = @(@{ finger = "RIGHT_THUMB"; template = $png; quality = 85 }, @{ finger = "LEFT_THUMB"; template = $png; quality = 78 }) } -Customer
+    Ok "M-3 fingerprints enrolled with the bank: $($e.fingers -join ', ')"
+    try { Gw Post "/customers/$cif/signature" @{ image = $png; strokes = 2; capturedWith = "STYLUS" } -Customer | Out-Null } catch [StmError] { Warn "M-7 empty signature pad: $($_.Exception.Code)" }
+    $s = Gw Post "/customers/$cif/signature" @{ image = $sig; strokes = 9; capturedWith = "STYLUS" } -Customer
+    Ok "M-7 specimen signature $(if ($s.replacedPrevious) { 'replaced' } else { 'registered' }) ($($s.reference))"
+    Say "M-4/M-5 change of phone number is not run here: it puts a 24-hour hold on the customer (see docs/CARD-AND-CUSTOMER-SERVICES.md)"
     End-Session
 }
 
@@ -327,7 +400,7 @@ $h = Gw Post "/devices/$script:device/health" @{ modules = @{ cardReader = "OK";
     receiptPrinter = "OK"; a4Printer = "OK"; idScanner = "OK"; fingerprint = "OK"; camera = "OK"; pinPad = "OK" } }
 Say "D-6 health reported, disabled services: $(if ($h.disabledServices.Count) { $h.disabledServices -join ', ' } else { 'none' })"
 
-$flows = if ($Flow -eq "All") { @("AccountOpening", "Referral", "FaceFail", "CardServices", "Withdrawal", "Deposit", "Forex", "Statement", "TellerCall") } else { @($Flow) }
+$flows = if ($Flow -eq "All") { @("AccountOpening", "Referral", "FaceFail", "CardServices", "CardCare", "ExistingCustomer", "Withdrawal", "Deposit", "Forex", "Statement", "TellerCall") } else { @($Flow) }
 $failed = @()
 foreach ($f in $flows) {
     try { & "Flow-$f" }

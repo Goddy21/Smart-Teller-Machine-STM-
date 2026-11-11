@@ -45,6 +45,7 @@ Show `message` / `messageSw` to the customer as is. Common codes: `VALIDATION_ER
 - D · Device and session: D-1 … D-9, X-6, signaling ticket
 - B · Open an account: B-1 … B-14
 - C / S · Cards, card + PIN: S-1, S-2, C-1 … C-10
+- P / M · Card care and existing customers: P-1 … P-5, M-1 … M-7
 - S · Balance and statements: S-3 … S-6
 - K · Cash deposit: K-1 … K-5
 - W · Cash withdrawal: W-1 … W-4
@@ -59,6 +60,9 @@ Show `message` / `messageSw` to the customer as is. Common codes: `VALIDATION_ER
 |---|---|
 | Open an account | D-2 → B-1 → B-2 → B-3 → B-4 → B-5 → B-6 → B-7 → B-8 → B-9 → B-10 → B-11 → B-12 → C-5 (applicationId) → C-6 … → C-7 → C-8 → C-9 → R-1 → D-4 |
 | Card services, no card | D-2 → C-1 → KYC status → SIM-swap check → B-9 (CARD_SERVICES) → B-10 → B-5 (customerId + lookupRef) → C-2 → C-3 → C-4 → C-5 → C-6 … → C-7 → C-8 → C-9 → D-4 |
+| Card care (PIN, freeze, lost) | verify as above (or S-1 → S-2 for P-2, P-4, C-10) → M-1 → C-2 → P-2 / P-3 / P-4 / P-5 / C-10 → D-4 |
+| Existing customer's record | verify as above → M-1 → M-3 (fingerprints) → M-7 (signature) → M-2 (dormant account) → D-4 |
+| Change phone number | verify as above (phone lost: C-1 → B-5 with `purpose: MOBILE_CHANGE`, face + thumbprint) → M-4 → B-9 (MOBILE_CHANGE) → B-10 → M-5 → D-4 |
 | Withdrawal | D-2 (CARD) → S-1 → S-2 → S-3 → W-1 → W-2 → dispense → W-3 (or W-4) → R-1 → D-4 |
 | Deposit | D-2 → K-1 → K-2 → K-3 → K-4 (or K-5) → R-1 → D-4 |
 | Forex, bank buys | D-2 → X-1 → B-4 (FOREX) → X-2 → X-3 → X-4 → X-5 → W-3 → D-4 |
@@ -452,7 +456,7 @@ Seen in testing: `409 EXISTING_CUSTOMER`, `422 IDENTITY_MISMATCH`
 
 `POST /stm/v1/identity/biometrics/verify`  ·  needs `X-Session-Id`
 
-Account opening: applicationId + verificationId. Card services: customerId + lookupRef (after the OTP), and the answer carries `customerToken`. 422 BIOMETRIC_NO_MATCH with `details.attemptsLeft`; at 0 a teller decides in the portal.
+Account opening: applicationId + verificationId. Card services: customerId + lookupRef (after the OTP), and the answer carries `customerToken` (source `VERIFIED_IDENTITY`) and `bankEnrolment` `{enrolled, fingers, offerEnrolment}`; the thumbprint is matched against the bank's enrolled prints when there are any (`fingerprint.against: BANK`), otherwise against IPRS. Phone lost: customerId + lookupRef + `"purpose": "MOBILE_CHANGE"` with face **and** fingerprint, no OTP; the token (source `BIOMETRIC_ONLY`, `allows: ["MOBILE_CHANGE"]`) works only for M-4 and M-5. 422 BIOMETRIC_NO_MATCH with `details.attemptsLeft`; at 0 a teller decides in the portal.
 
 Request:
 ```json
@@ -567,7 +571,7 @@ Response `200`:
 
 `POST /stm/v1/otp/send`  ·  needs `X-Session-Id`
 
-`purpose`: ONBOARDING_PHONE (with applicationId) or CARD_SERVICES (with lookupRef). 403 SCREENING_REFERRED, 403 SIM_SWAP_RISK (the SIM was swapped within 72 h), 429 RESEND_TOO_SOON (60 s). Demo code: 123456.
+`purpose`: ONBOARDING_PHONE (with applicationId), CARD_SERVICES (with lookupRef: the code goes to the number on record) or MOBILE_CHANGE (with changeRef from M-4: the code goes to the new number). 403 SCREENING_REFERRED, 403 SIM_SWAP_RISK (the SIM was swapped within 72 h), 429 RESEND_TOO_SOON (60 s). Demo code: 123456.
 
 Request:
 ```json
@@ -631,6 +635,9 @@ Response `200`:
   "status": "SIGNATURE_CAPTURED"
 }
 ```
+The image is checked: PNG or JPEG, at least 120 × 40 pixels, with visible strokes. Otherwise 422 `SIGNATURE_UNREADABLE`
+(`details.reason`: EMPTY, TOO_SMALL, BLANK, FILLED; retryable). At B-12 it becomes the customer's specimen signature.
+
 ### B-12 · Open the account (B9)
 
 `POST /stm/v1/onboarding/applications/{applicationId}/submit`  ·  needs `X-Session-Id`, `Idempotency-Key`
@@ -663,9 +670,15 @@ Response `201`:
   "cardOrderAllowed": true,
   "nameOnCard": "AMARA N KAMAU",
   "reference": "STM-ACC-10001",
-  "smsSent": true
+  "smsSent": true,
+  "mandate": {
+    "signatureRegistered": true,
+    "biometricsEnrolled": true
+  }
 }
 ```
+`mandate`: the signature (B-11) and the thumbprint that passed B-5 were stored in core banking with the account.
+
 Seen in testing: `409 IDEMPOTENCY_CONFLICT`
 
 ### B-13 · Application status
@@ -711,7 +724,7 @@ Response `200`:
 
 `POST /stm/v1/auth/card`  ·  needs `X-Session-Id`
 
-403 CARD_BLOCKED / CARD_EXPIRED with `details.cardAction` (RETAIN or RETURN).
+403 with `details.cardAction` (RETAIN or RETURN): CARD_BLOCKED (lost, stolen, damaged: RETAIN), CARD_EXPIRED (RETURN), CARD_TEMP_BLOCKED (frozen by the customer: RETURN, `nextStep: UNBLOCK`), PIN_LOCKED (locked by wrong PINs earlier: RETURN, `nextStep: PIN_RESET`).
 
 Request:
 ```json
@@ -741,7 +754,7 @@ Seen in testing: `403 CARD_BLOCKED`, `403 CARD_EXPIRED`
 
 `POST /stm/v1/auth/card/pin-verify`  ·  needs `X-Session-Id`
 
-`pinBlock` from the PIN pad (demo: clear ISO field, 2580 → 042580FFFFFFFFFF). 401 PIN_INCORRECT; 403 PIN_TRIES_EXCEEDED after 3 (`cardAction: RETAIN`). Returns `customerToken`.
+`pinBlock` from the PIN pad (demo: clear ISO field, 2580 → 042580FFFFFFFFFF). 401 PIN_INCORRECT; 403 PIN_TRIES_EXCEEDED after 3 (`cardAction: RETAIN`). Returns `customerToken` (source `CARD_PIN`). `accounts` holds the accounts that can transact; dormant, frozen or closed ones come in `restrictedAccounts` (`accountId`, `type`, `masked`, `status`, `nextStep`).
 
 Request:
 ```json
@@ -851,46 +864,97 @@ Response `200`:
 
 `GET /stm/v1/customers/{customerId}/cards`  ·  needs `X-Session-Id`, `X-Customer-Token`
 
-401 CUSTOMER_TOKEN_REQUIRED; another customer's id gives 403.
+Every card the customer holds (several per customer and per account are possible), each with its state in words and the `actions` the kiosk may offer. See P-1 for the fields. 401 CUSTOMER_TOKEN_REQUIRED; another customer's id gives 403.
 
 Response `200`:
 ```json
 {
   "cards": [
     {
-      "cardId": "crd_4521",
-      "maskedPan": "4512 •••• •••• 4521",
+      "cardId": "crd_8101",
+      "maskedPan": "4512 •••• •••• 8101",
       "product": "CLASSIC",
       "status": "ACTIVE",
-      "expiry": "2028-05",
-      "linkedAccountId": "acc_2LM8"
+      "statusText": "Active",
+      "expiry": "2029-03",
+      "expired": false,
+      "expiresSoon": false,
+      "pinSet": true,
+      "pinAttemptsLeft": 3,
+      "linkedAccountId": "acc_M1SV",
+      "linkedAccount": "Savings ••• 7001",
+      "accountStatus": "ACTIVE",
+      "usable": true,
+      "actions": [
+        "PIN_CHANGE",
+        "PIN_RESET",
+        "TEMPORARY_BLOCK",
+        "BLOCK_AND_REPLACE"
+      ]
+    },
+    {
+      "cardId": "crd_8104",
+      "maskedPan": "4512 •••• •••• 8104",
+      "product": "CLASSIC",
+      "status": "BLOCKED",
+      "statusText": "Blocked: damaged",
+      "reason": "DAMAGED",
+      "since": "2026-10-31T18:12:24.177Z",
+      "expiry": "2027-06",
+      "expired": false,
+      "expiresSoon": false,
+      "pinSet": true,
+      "pinAttemptsLeft": 3,
+      "linkedAccountId": "acc_M2CU",
+      "linkedAccount": "Current ••• 7002",
+      "accountStatus": "ACTIVE",
+      "usable": false,
+      "actions": [
+        "REPLACEMENT"
+      ]
     }
   ]
 }
 ```
-Seen in testing: `401 CUSTOMER_TOKEN_REQUIRED`
+### C-3 · Accounts (C4)
 
-### C-3 · Accounts for a card (C4)
+`GET /stm/v1/customers/{customerId}/accounts[?eligibleFor=CARD]`  ·  needs `X-Session-Id`, `X-Customer-Token`
 
-`GET /stm/v1/customers/{customerId}/accounts?eligibleFor=CARD`  ·  needs `X-Session-Id`, `X-Customer-Token`
-
-With `eligibleFor=CARD` each account has `eligible` and `reason`.
+Every account with its `status` (ACTIVE, DORMANT, FROZEN, CLOSED), `canTransact`, and for the ones that cannot transact `statusText` and `nextStep` (ACCOUNT_REACTIVATION → M-2, or TELLER). `cards` counts the cards on the account. With `eligibleFor=CARD` each account also has `eligible` and `reason`.
 
 Response `200`:
 ```json
 {
   "accounts": [
     {
-      "accountId": "acc_0JS5",
-      "type": "JUNIOR_SAVER",
-      "masked": "••• 1093",
+      "accountId": "acc_M1SV",
+      "type": "SAVINGS",
+      "masked": "••• 7001",
       "available": {
-        "amount": "2200.00",
+        "amount": "48200.00",
         "currency": "KES"
       },
+      "status": "ACTIVE",
+      "canTransact": true,
+      "lastActivityAt": "2026-11-05T18:12:24.177Z",
+      "hasCard": true,
+      "cards": 3
+    },
+    {
+      "accountId": "acc_M3DM",
+      "type": "SAVINGS",
+      "masked": "••• 7003",
+      "available": {
+        "amount": "15300.00",
+        "currency": "KES"
+      },
+      "status": "DORMANT",
+      "canTransact": false,
+      "lastActivityAt": "2025-03-10T18:12:24.177Z",
+      "statusText": "Dormant: reactivate it to use it",
+      "nextStep": "ACCOUNT_REACTIVATION",
       "hasCard": false,
-      "eligible": false,
-      "reason": "Cards aren't available for this account type"
+      "cards": 0
     }
   ]
 }
@@ -1099,7 +1163,7 @@ Response `200`:
 
 `POST /stm/v1/cards/{cardId}/block`  ·  needs `X-Session-Id`, `X-Customer-Token`
 
-`reason`: LOST, STOLEN, DAMAGED or EXPIRED. Sends an SMS.
+`reason`: LOST, STOLEN, DAMAGED or EXPIRED. Permanent: the card can only be replaced (C-5 REPLACEMENT). For a freeze the customer can lift, use P-4. Sends an SMS.
 
 Request:
 ```json
@@ -1110,12 +1174,349 @@ Request:
 Response `200`:
 ```json
 {
-  "cardId": "crd_4521",
+  "cardId": "crd_8102",
+  "maskedPan": "4512 •••• •••• 8102",
   "status": "BLOCKED",
-  "blockedAt": "2026-11-06T14:30:00+03:00",
-  "reason": "LOST"
+  "blockedAt": "2026-11-10T21:12:34.466892056+03:00",
+  "reason": "LOST",
+  "reference": "STM-SVC-10005"
 }
 ```
+
+## P / M · Card care and existing customers
+
+The step-by-step guide with screens is `docs/CARD-AND-CUSTOMER-SERVICES.md`. The customer token has a source:
+`CARD_PIN` (S-2), `VERIFIED_IDENTITY` (C-1 + B-9 + B-10 + B-5: code and thumbprint) or `BIOMETRIC_ONLY` (B-5 with
+`purpose: MOBILE_CHANGE`, phone lost: face and thumbprint, no code). Calls marked **strong** need `VERIFIED_IDENTITY`
+and answer 403 `STEP_UP_REQUIRED` otherwise. A `BIOMETRIC_ONLY` token works only for M-4 and M-5. For 24 hours after a
+phone-number change (`stm.services.mobile-change-hold-hours`) P-3, P-5, M-2, M-4, M-7 and C-5 answer 403
+`MOBILE_RECENTLY_CHANGED`. Every change is recorded (portal: Cards → Service requests) and sends an SMS.
+
+### P-1 · Card status
+
+`GET /stm/v1/cards/{cardId}/status`  ·  needs `X-Session-Id`, `X-Customer-Token`
+
+The same object as each entry of C-2. `status`: INACTIVE_PIN_REQUIRED, ACTIVE, TEMP_BLOCKED, BLOCKED, PIN_LOCKED, EXPIRED. `statusText` is in the session language. `actions` lists what the kiosk may offer: PIN_CHANGE, PIN_RESET, TEMPORARY_BLOCK, UNBLOCK, BLOCK_AND_REPLACE, REPLACEMENT, NEW_CARD_SETUP. `usable` is false when the card or its account cannot transact.
+
+Response `200`:
+```json
+{
+  "cardId": "crd_8104",
+  "maskedPan": "4512 •••• •••• 8104",
+  "product": "CLASSIC",
+  "status": "BLOCKED",
+  "statusText": "Blocked: damaged",
+  "reason": "DAMAGED",
+  "since": "2026-10-31T18:12:24.177Z",
+  "expiry": "2027-06",
+  "expired": false,
+  "expiresSoon": false,
+  "pinSet": true,
+  "pinAttemptsLeft": 3,
+  "linkedAccountId": "acc_M2CU",
+  "linkedAccount": "Current ••• 7002",
+  "accountStatus": "ACTIVE",
+  "usable": false,
+  "actions": [
+    "REPLACEMENT"
+  ]
+}
+```
+### P-2 · Change PIN
+
+`POST /stm/v1/cards/{cardId}/pin/change`  ·  needs `X-Session-Id`, `X-Customer-Token`
+
+The customer knows the current PIN. Any token. A wrong current PIN counts towards the three tries.
+
+Request:
+```json
+{
+  "currentPinBlock": "042468FFFFFFFFFF",
+  "newPinBlock": "049731FFFFFFFFFF",
+  "format": "ISO_9564_FORMAT_4",
+  "keySerialNumber": "FFFF9876543210E00009",
+  "confirmed": true
+}
+```
+Response `200`:
+```json
+{
+  "cardId": "crd_8101",
+  "maskedPan": "4512 •••• •••• 8101",
+  "status": "ACTIVE",
+  "pinChanged": true,
+  "reference": "STM-SVC-10001"
+}
+```
+Errors: 401 `PIN_INCORRECT` (`attemptsLeft`), 403 `PIN_LOCKED` at 0, 422 `PIN_UNCHANGED`, `PIN_POLICY`, `PIN_NOT_CONFIRMED`, 403 `CARD_TEMP_BLOCKED`, 409 `CARD_BLOCKED_PERMANENT`
+
+### P-3 · Reset PIN
+
+`POST /stm/v1/cards/{cardId}/pin/reset`  ·  needs `X-Session-Id`, `X-Customer-Token` (**strong**)
+
+Forgot the PIN, or the card is PIN_LOCKED. `unlocked` is true when the card had been locked.
+
+Request:
+```json
+{
+  "newPinBlock": "048642FFFFFFFFFF",
+  "format": "ISO_9564_FORMAT_4",
+  "keySerialNumber": "FFFF9876543210E00009",
+  "confirmed": true
+}
+```
+Response `200`:
+```json
+{
+  "cardId": "crd_8105",
+  "maskedPan": "4512 •••• •••• 8105",
+  "status": "ACTIVE",
+  "pinReset": true,
+  "reference": "STM-SVC-10002",
+  "unlocked": true
+}
+```
+Errors: 403 `STEP_UP_REQUIRED`, 403 `MOBILE_RECENTLY_CHANGED`, 422 `PIN_POLICY`, `PIN_NOT_CONFIRMED`
+
+### P-4 · Temporary block
+
+`POST /stm/v1/cards/{cardId}/temporary-block`  ·  needs `X-Session-Id`, `X-Customer-Token`
+
+A freeze the customer can lift (P-5). `reason`: MISPLACED (default), SUSPICIOUS, TRAVEL or OTHER. Any token. For a lost or stolen card use C-10.
+
+Request:
+```json
+{
+  "reason": "TRAVEL"
+}
+```
+Response `200`:
+```json
+{
+  "cardId": "crd_8102",
+  "maskedPan": "4512 •••• •••• 8102",
+  "status": "TEMP_BLOCKED",
+  "temporarilyBlocked": true,
+  "reference": "STM-SVC-10003"
+}
+```
+Errors: 409 `CARD_BLOCKED_PERMANENT`
+
+### P-5 · Unblock
+
+`POST /stm/v1/cards/{cardId}/unblock`  ·  needs `X-Session-Id`, `X-Customer-Token` (**strong**)
+
+Lifts a temporary block. No body.
+
+Response `200`:
+```json
+{
+  "cardId": "crd_8103",
+  "maskedPan": "4512 •••• •••• 8103",
+  "status": "ACTIVE",
+  "unblocked": true,
+  "reference": "STM-SVC-10004"
+}
+```
+Errors: 409 `CARD_BLOCKED_PERMANENT` (`reason`, `nextStep: CARD_REPLACEMENT`), 409 `WRONG_STATE` (`nextStep: PIN_RESET`) for a PIN-locked card, 403 `STEP_UP_REQUIRED`, 403 `MOBILE_RECENTLY_CHANGED`
+
+### M-1 · Customer profile
+
+`GET /stm/v1/customers/{customerId}/profile`  ·  needs `X-Session-Id`, `X-Customer-Token`
+
+What core banking holds for the customer and what the kiosk should offer (`suggestions`: ENROL_BIOMETRICS, REGISTER_SIGNATURE, REACTIVATE_ACCOUNT, KYC_REFRESH_WITH_TELLER). `verifiedBy` is the token source.
+
+Response `200`:
+```json
+{
+  "customerId": "CIF00204417",
+  "firstName": "Mary",
+  "maskedMobile": "+254 7•• ••• 417",
+  "mobileChangedAt": null,
+  "mobileHold": {
+    "hoursLeft": 0,
+    "active": false
+  },
+  "verifiedBy": "VERIFIED_IDENTITY",
+  "kyc": {
+    "status": "CURRENT",
+    "nextReviewDue": "2028-09-10",
+    "kraPinOnFile": true,
+    "selfServiceAllowed": true,
+    "flags": []
+  },
+  "biometrics": {
+    "enrolled": false,
+    "fingers": [],
+    "enrolledAt": null,
+    "source": null
+  },
+  "signature": {
+    "onFile": false,
+    "capturedAt": null,
+    "source": null
+  },
+  "accounts": {
+    "total": 4,
+    "restricted": 1,
+    "dormant": 1,
+    "active": 2
+  },
+  "cards": {
+    "active": 2,
+    "total": 5,
+    "needAttention": 3
+  },
+  "suggestions": [
+    "ENROL_BIOMETRICS",
+    "REGISTER_SIGNATURE",
+    "REACTIVATE_ACCOUNT"
+  ]
+}
+```
+### M-2 · Reactivate a dormant account
+
+`POST /stm/v1/accounts/{accountId}/reactivate`  ·  needs `X-Session-Id`, `X-Customer-Token` (**strong**)
+
+An account is DORMANT after 12 months without customer activity (`stm.accounts.dormant-after-months`). Debits answer 403 `ACCOUNT_DORMANT`; deposits are accepted. Reactivation needs current KYC.
+
+Request:
+```json
+{
+  "confirmed": true
+}
+```
+Response `200`:
+```json
+{
+  "accountId": "acc_M3DM",
+  "masked": "••• 7003",
+  "type": "SAVINGS",
+  "status": "ACTIVE",
+  "reactivated": true,
+  "reference": "STM-SVC-10006"
+}
+```
+Errors: 403 `ACCOUNT_RESTRICTED` (frozen or closed: a teller), 403 `KYC_REFRESH_REQUIRED`, 403 `STEP_UP_REQUIRED`, 403 `MOBILE_RECENTLY_CHANGED`
+
+### M-3 · Enrol fingerprints
+
+`POST /stm/v1/customers/{customerId}/biometrics/enrol`  ·  needs `X-Session-Id`, `X-Customer-Token` (**strong**)
+
+One to four fingers. Each must have quality 50 or more and match the national registry. After this, B-5 matches against the bank (`against: BANK`).
+
+Request:
+```json
+{
+  "consent": true,
+  "fingerprints": [
+    {
+      "finger": "RIGHT_THUMB",
+      "template": "<base64>",
+      "quality": 82
+    },
+    {
+      "finger": "LEFT_THUMB",
+      "template": "<base64>",
+      "quality": 77
+    }
+  ]
+}
+```
+Response `200`:
+```json
+{
+  "enrolled": true,
+  "fingers": [
+    "LEFT_THUMB",
+    "RIGHT_THUMB"
+  ],
+  "enrolledAt": "2026-11-10T18:12:35.745Z",
+  "reference": "STM-SVC-10007"
+}
+```
+Errors: 422 `CONSENT_REQUIRED`, 422 `BIOMETRIC_QUALITY_LOW` (`finger`), 422 `BIOMETRIC_NO_MATCH` (`finger`)
+
+### M-4 · Start a phone-number change
+
+`POST /stm/v1/customers/{customerId}/mobile-change`  ·  needs `X-Session-Id`, `X-Customer-Token` (**strong**, or the phone-lost token)
+
+Then B-9 with `{"purpose": "MOBILE_CHANGE", "changeRef": …}` (the code goes to the new number), B-10, and M-5.
+
+Request:
+```json
+{
+  "newMobile": "0711000999"
+}
+```
+Response `200`:
+```json
+{
+  "changeRef": "mch_008FAR5R11RJ",
+  "maskedCurrentMobile": "+254 7•• ••• 417",
+  "maskedNewMobile": "+254 7•• ••• 999",
+  "nextStep": "OTP",
+  "otpPurpose": "MOBILE_CHANGE"
+}
+```
+Errors: 422 `MOBILE_UNCHANGED`, 409 `MOBILE_IN_USE`, 403 `SIM_SWAP_RISK` (new SIM swapped within 72 h), 403 `MOBILE_RECENTLY_CHANGED`
+
+### M-5 · Confirm the phone-number change
+
+`POST /stm/v1/customers/{customerId}/mobile-change/{changeRef}/confirm`  ·  needs `X-Session-Id`, `X-Customer-Token` (**strong**, or the phone-lost token)
+
+Changes the number in core banking and texts both the old and the new number. No body.
+
+Response `200`:
+```json
+{
+  "changed": true,
+  "maskedMobile": "+254 7•• ••• 999",
+  "holdHours": 24,
+  "reference": "STM-SVC-10009"
+}
+```
+Errors: 409 `WRONG_STATE` (`nextStep: OTP`) until the code on the new number is verified, 404 `MOBILE_CHANGE_NOT_FOUND`
+
+### M-6 · Signature on file
+
+`GET /stm/v1/customers/{customerId}/signature`  ·  needs `X-Session-Id`, `X-Customer-Token`
+
+Whether core banking holds a specimen signature. The image is never returned to the kiosk. `source`: BRANCH, STM_ONBOARDING, STM_UPDATE.
+
+Response `200`:
+```json
+{
+  "onFile": true,
+  "signatureId": "sig_R1ME4F2F3ATZ",
+  "capturedAt": "2026-11-10T18:03:18.801Z",
+  "source": "STM_UPDATE"
+}
+```
+### M-7 · Register or update the signature
+
+`POST /stm/v1/customers/{customerId}/signature`  ·  needs `X-Session-Id`, `X-Customer-Token` (**strong**)
+
+PNG or JPEG, at least 120 × 40 pixels, with visible strokes (the same check as B-11). The previous signature is kept as superseded.
+
+Request:
+```json
+{
+  "image": "<base64>",
+  "strokes": 4,
+  "capturedWith": "STYLUS"
+}
+```
+Response `200`:
+```json
+{
+  "signatureId": "sig_4S1GDTJ9JJV4",
+  "capturedAt": "2026-11-10T18:12:36.808Z",
+  "replacedPrevious": false,
+  "reference": "STM-SVC-10008"
+}
+```
+Errors: 422 `SIGNATURE_UNREADABLE` (`reason`: EMPTY, TOO_SMALL, BLANK, FILLED), 403 `STEP_UP_REQUIRED`, 403 `MOBILE_RECENTLY_CHANGED`
 
 ## S · Balance and statements
 
@@ -1871,6 +2272,8 @@ Also `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/passw
 | `GET /transactions?kind=DEPOSIT\|WITHDRAWAL\|FX&status=` | all | `id, kind, terminalCode, sessionId, status, currency, amount, localAmount, party, transactionRef, coreRef, reversalRef, …` |
 | `GET /postings?refs=FT…,FT…` | all | core-banking postings: `coreRef, accountId (or GL), direction DR/CR, amount, currency, narrative, balanceAfter` |
 | `GET /card-orders?status=` | all | card orders with steps, fee and customer |
+| `GET /service-events?kind=&q=&page=&size=` | all | card and account changes made at the kiosks: PIN_CHANGED, PIN_RESET, CARD_TEMP_BLOCKED, CARD_UNBLOCKED, CARD_BLOCKED, ACCOUNT_REACTIVATED, BIOMETRICS_ENROLLED, MOBILE_CHANGED, SIGNATURE_REGISTERED, SIGNATURE_UPDATED |
+| `GET /customers/{customerId}/signature` | all | the specimen signature image held by core banking (each view is audited); `GET /sessions/{id}` adds `serviceEvents` and `customerRecord` |
 | `GET /reconciliation` | SUPERVISOR, AUDITOR, ADMIN | `positions[]` (A-2 reports with variances and caseId), `cassettes[]` (cash now, per currency), `pendingReversals[]` |
 | `GET /device-journal?terminal=&ref=` | SUPERVISOR, AUDITOR, ADMIN | A-1 entries with `signatureValid` |
 | `GET /sms` | all | SMS outbox (numbers and codes masked) |

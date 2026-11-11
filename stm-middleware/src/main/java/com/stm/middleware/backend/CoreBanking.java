@@ -14,8 +14,15 @@ public interface CoreBanking {
 
     record Customer(String id, String idNumber, String fullName, String firstName, String mobile, String kraPin) {}
 
+    /**
+     * status: ACTIVE, DORMANT (no customer activity for the bank's dormancy period), FROZEN or CLOSED.
+     * statusReason explains FROZEN / CLOSED (for example COURT_ORDER); lastActivityAt is the last customer-initiated movement.
+     */
     record Account(String id, String number, String customerId, String type, String productCode, String currency,
-                   BigDecimal ledger, BigDecimal available, String branch, String status, boolean cardEligible) {
+                   BigDecimal ledger, BigDecimal available, String branch, String status, boolean cardEligible,
+                   OffsetDateTime lastActivityAt, String statusReason) {
+        public boolean active() { return "ACTIVE".equals(status); }
+        public boolean dormant() { return "DORMANT".equals(status); }
         public String masked() {
             return "••• " + number.substring(Math.max(0, number.length() - 4));
         }
@@ -31,6 +38,16 @@ public interface CoreBanking {
 
     /** The customer's KYC record as core banking holds it (for refresh and risk decisions). */
     record KycProfile(OffsetDateTime lastReviewedAt, String riskRating, boolean pep, String sanctions, List<String> flags) {}
+
+    /** The bank's own fingerprint enrolment for a customer (none for customers who never enrolled). */
+    record Biometrics(boolean enrolled, List<String> fingers, OffsetDateTime enrolledAt, String source) {}
+
+    record FingerTemplate(String finger, byte[] template, int quality) {}
+
+    /** The specimen signature on the account mandate. */
+    record Signature(String id, OffsetDateTime capturedAt, String source) {}
+
+    record SignatureImage(byte[] content, String mimeType) {}
 
     record NewCustomer(String idNumber, String fullName, String firstName, String mobile, String kraPin, String addressJson) {}
 
@@ -69,6 +86,34 @@ public interface CoreBanking {
     String reverse(String coreRef, String narrative);
 
     List<Line> history(String accountId, OffsetDateTime since, int limit);
+
+    // ---- customer maintenance
+
+    /** DORMANT -> ACTIVE after the customer has been re-identified. ACCOUNT_RESTRICTED for FROZEN / CLOSED. */
+    Account reactivate(String accountId, String reference);
+
+    /** When the phone number last changed, if ever. */
+    Optional<OffsetDateTime> mobileChangedAt(String customerId);
+
+    /** True when another customer already uses this number. */
+    boolean mobileInUse(String mobile, String exceptCustomerId);
+
+    void changeMobile(String customerId, String newMobile, String channel, String reference);
+
+    Biometrics biometrics(String customerId);
+
+    /** Stores the bank's templates for these fingers (replacing earlier ones for the same finger). */
+    Biometrics enrolBiometrics(String customerId, List<FingerTemplate> fingers, String source);
+
+    /** Matches a live fingerprint against the bank's enrolled template. Empty when the customer is not enrolled. */
+    Optional<IdentityServices.MatchResult> matchEnrolledFingerprint(String customerId, String finger, byte[] template, int quality);
+
+    Optional<Signature> signature(String customerId);
+
+    Optional<SignatureImage> signatureImage(String customerId);
+
+    /** Registers a new specimen signature; the previous one becomes SUPERSEDED. */
+    Signature registerSignature(String customerId, byte[] image, String mimeType, String source);
 
     BigDecimal glBalance(String gl, String currency);
 }

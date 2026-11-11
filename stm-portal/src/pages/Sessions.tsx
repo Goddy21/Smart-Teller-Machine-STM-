@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { usePortal } from "../context";
 import { can } from "../auth";
-import type { Application, Capture, Decision, SessionDetail, SessionRow, TimelineEntry } from "../api/portal";
+import type { Application, Capture, CustomerRecord, Decision, SessionDetail, SessionRow, TimelineEntry } from "../api/portal";
 import {
-  Badge, Button, Card, Drawer, Empty, ErrorNote, Field, fmt, Mono, Segmented, Spinner, useLoad,
+  Badge, Button, Card, Drawer, Empty, ErrorNote, Field, fmt, Mono, Pager, Segmented, Spinner, useDebounced, useLoad, usePaging,
 } from "../ui/kit";
 import { IconCard, IconCash, IconCheck, IconFace, IconFile, IconFingerprint, IconSearch, IconShield, IconVideo, IconX } from "../ui/Icons";
-import { CAPTURE_LABEL, CARD_SERVICE_LABEL, END_REASON, FLOW_LABEL, flowLabel, label, STEP_LABEL } from "../ui/labels";
+import { CAPTURE_LABEL, CARD_SERVICE_LABEL, END_REASON, FLOW_LABEL, flowLabel, label, SERVICE_KIND, SOURCE_LABEL, STEP_LABEL } from "../ui/labels";
 
 type Filter = "teller" | "active" | "ended" | "all";
 
@@ -15,20 +15,16 @@ export function Sessions({ initialId }: { initialId?: string }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [flow, setFlow] = useState("");
   const [q, setQ] = useState("");
-  const all = useLoad(() => portal.sessions({ flow }), [flow], 10_000);
+  const dq = useDebounced(q.trim());
+  const paging = usePaging("sessions", [flow, filter, dq]);
+  // Filters, search and paging run on the server, over every session (not only the newest few hundred).
+  const all = useLoad(() => portal.sessionsPage({ flow: flow || undefined, q: dq || undefined, view: filter, page: paging.page, size: paging.size }),
+    [flow, filter, dq, paging.page, paging.size], 10_000);
 
   useEffect(() => { if (initialId) openSession(initialId); }, [initialId, openSession]);
 
-  const test = (s: SessionRow, f: Filter) =>
-    f === "teller" ? s.needsTeller : f === "active" ? s.status === "ACTIVE" : f === "ended" ? s.status !== "ACTIVE" : true;
-
-  const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return (all.data ?? []).filter((s) => test(s, filter))
-      .filter((s) => !needle || [s.customerName, s.customerId, s.terminalCode, s.id].some((v) => v?.toLowerCase().includes(needle)));
-  }, [all.data, filter, q]);
-
-  const count = (f: Filter) => (all.data ?? []).filter((s) => test(s, f)).length;
+  const rows = all.data?.items ?? [];
+  const count = (f: Filter) => all.data?.counts?.[f];
 
   return (
     <Card pad={false}
@@ -88,6 +84,7 @@ export function Sessions({ initialId }: { initialId?: string }) {
             </table>
           </div>
         )}
+      <Pager data={all.data} onPage={paging.setPage} onSize={paging.setSize} />
     </Card>
   );
 }
@@ -101,6 +98,7 @@ function Activity({ s }: { s: SessionRow }) {
   if (s.withdrawalsCount) chips.push(fmt.plural(s.withdrawalsCount, "withdrawal"));
   if (s.fxCount) chips.push(fmt.plural(s.fxCount, "forex deal"));
   if (s.statementsCount) chips.push(fmt.plural(s.statementsCount, "statement"));
+  if (s.serviceEventsCount) chips.push(fmt.plural(s.serviceEventsCount, "service request"));
   if (s.tellerCallsCount) chips.push(fmt.plural(s.tellerCallsCount, "teller call"));
   if (!chips.length) return <span className="muted">{s.endReason ? label(END_REASON, s.endReason) : "—"}</span>;
   return <span className="muted">{chips.join(" · ")}</span>;
@@ -141,7 +139,7 @@ export function SessionBody({ s, timeline, compact = false, onChange }: {
   s: SessionDetail; timeline?: TimelineEntry[]; compact?: boolean; onChange?: () => void;
 }) {
   const nothing = !s.applications.length && !s.cardOrders.length && !s.deposits.length && !s.withdrawals.length
-    && !s.fxExchanges.length && !s.statements.length && !s.verifications.length;
+    && !s.fxExchanges.length && !s.statements.length && !s.verifications.length && !(s.serviceEvents?.length);
   return (
     <div className="stack stack--sm">
       {!compact && (
@@ -225,6 +223,28 @@ export function SessionBody({ s, timeline, compact = false, onChange }: {
           </table>
         </div>
       )}
+
+      {s.serviceEvents?.length > 0 && (
+        <div className="section">
+          <div className="h3 with-icon"><IconShield /> Card and account services</div>
+          <table className="table table--dense">
+            <thead><tr><th>What</th><th>On</th><th>Details</th><th>Reference</th><th>When</th></tr></thead>
+            <tbody>
+              {s.serviceEvents.map((e) => (
+                <tr key={e.id}>
+                  <td><b>{label(SERVICE_KIND, e.kind)}</b></td>
+                  <td>{serviceSubject(e.kind, e.subject)}</td>
+                  <td className="muted">{serviceDetail(e.kind, e.detail)}</td>
+                  <td>{e.reference ? <Mono>{e.reference}</Mono> : "—"}</td>
+                  <td className="muted">{fmt.dateTime(e.createdAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!compact && s.customerId && s.customerRecord && <OnFile customerId={s.customerId} r={s.customerRecord} />}
 
       {s.statements.length > 0 && (
         <div className="section">
@@ -422,6 +442,69 @@ function BioTile({ icon, label: l, result, note }: { icon: ReactNode; label: str
       <span className="bio__icon">{icon}</span>
       <span className="bio__label">{l}: {result ? fmt.words(result) : "not yet"}</span>
       {note && <small className="muted">{note}</small>}
+    </div>
+  );
+}
+
+/** The card, account or number a service request was about. */
+export function serviceSubject(kind: string, subject: string | null): ReactNode {
+  if (!subject) return <span className="muted">—</span>;
+  if (kind === "BIOMETRICS_ENROLLED") return subject.split(", ").map((f) => fmt.words(f)).join(", ");
+  return <Mono>{subject}</Mono>;
+}
+
+/** The few details of a service request worth a glance, in plain words. */
+export function serviceDetail(kind: string, d: Record<string, unknown> | null | undefined): string {
+  if (!d) return "";
+  const bits: string[] = [];
+  if (kind === "MOBILE_CHANGED") {
+    bits.push(`${d.from} → ${d.to}`);
+    bits.push(d.verifiedBy === "BIOMETRIC_ONLY" ? "phone lost: face and thumbprint" : "code and thumbprint");
+    if (d.holdHours) bits.push(`${d.holdHours} h hold`);
+  }
+  if (kind === "PIN_RESET" && d.unlocked) bits.push("card was locked by wrong PINs");
+  if ((kind === "CARD_TEMP_BLOCKED" || kind === "CARD_BLOCKED") && d.reason) bits.push(fmt.words(String(d.reason)));
+  if (kind === "ACCOUNT_REACTIVATED" && d.dormantSince) bits.push(`no activity since ${d.dormantSince}`);
+  if (kind === "BIOMETRICS_ENROLLED" && d.firstEnrolment) bits.push("first enrolment");
+  if (kind.startsWith("SIGNATURE") && d.capturedWith) bits.push(`${fmt.words(String(d.capturedWith))}${d.strokes ? `, ${d.strokes} strokes` : ""}`);
+  return bits.join(" · ");
+}
+
+/** What core banking holds to recognise this customer: fingerprints, specimen signature, phone-number change. */
+function OnFile({ customerId, r }: { customerId: string; r: CustomerRecord }) {
+  const { portal } = usePortal();
+  const [url, setUrl] = useState<string>();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  if (r.unavailable) return null;
+  async function view() {
+    setBusy(true);
+    try { const u = url ?? await portal.signatureUrl(customerId); setUrl(u); setOpen(true); } catch { /* shown as not available */ } finally { setBusy(false); }
+  }
+  return (
+    <div className="section">
+      <div className="h3 with-icon"><IconFingerprint /> On file with the bank</div>
+      <div className="fields fields--3">
+        <Field label="Fingerprints">
+          {r.biometricsEnrolled
+            ? <><Badge tone="good">Enrolled</Badge><small className="muted"><br />{(r.fingers ?? []).map((f) => fmt.words(f)).join(", ")} · {label(SOURCE_LABEL, r.biometricsSource)}</small></>
+            : <><Badge tone="warn">Not enrolled</Badge><small className="muted"><br />Checked against the national registry only</small></>}
+        </Field>
+        <Field label="Specimen signature">
+          {r.signatureOnFile
+            ? <><Badge tone="good">On file</Badge><small className="muted"><br />{fmt.date(r.signatureCapturedAt)} · {label(SOURCE_LABEL, r.signatureSource)}</small>
+                <br /><button type="button" className="link" onClick={view} disabled={busy} title="Every view is written to the audit journal">{busy ? "Opening…" : "View signature"}</button></>
+            : <Badge tone="warn">None on file</Badge>}
+        </Field>
+        <Field label="Phone number">{r.mobileChangedAt ? <>Changed {fmt.ago(r.mobileChangedAt)}<small className="muted"><br />{fmt.dateTime(r.mobileChangedAt)}</small></> : "Not changed"}</Field>
+      </div>
+      {open && url && (
+        <div className="lightbox" onClick={() => setOpen(false)}>
+          <img src={url} alt="Specimen signature" />
+          <span>Specimen signature · viewing is audited · click to close</span>
+        </div>
+      )}
     </div>
   );
 }

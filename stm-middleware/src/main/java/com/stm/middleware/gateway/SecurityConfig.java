@@ -58,7 +58,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/stm/v1/auth/device/token").permitAll()
                 .requestMatchers("/stm/v1/**").hasRole("DEVICE")
                 // ---- portal sign-in
-                .requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/login/otp", "/api/v1/auth/login/resend").permitAll()
                 .requestMatchers("/api/v1/auth/**").authenticated()
                 // ---- portal, by role. TELLER and SUPERVISOR decide; SUPERVISOR and ADMIN control kiosks;
                 //      AUDITOR reads the audit trail; ADMIN manages accounts. Everyone signed in can read the rest.

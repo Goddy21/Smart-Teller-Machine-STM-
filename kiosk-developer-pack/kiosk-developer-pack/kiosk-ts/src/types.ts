@@ -36,7 +36,11 @@ export type ErrorCode =
   | "OTP_TRIES_EXCEEDED" | "RESEND_TOO_SOON" | "SIM_SWAP_RISK"
   // cards
   | "PIN_INCORRECT" | "PIN_TRIES_EXCEEDED" | "PIN_POLICY" | "PIN_NOT_CONFIRMED" | "CARD_BLOCKED" | "CARD_EXPIRED"
-  | "ACCOUNT_NOT_ELIGIBLE"
+  | "ACCOUNT_NOT_ELIGIBLE" | "CARD_TEMP_BLOCKED" | "CARD_BLOCKED_PERMANENT" | "PIN_LOCKED" | "PIN_UNCHANGED"
+  // existing-customer services
+  | "STEP_UP_REQUIRED" | "ACCOUNT_DORMANT" | "ACCOUNT_RESTRICTED" | "KYC_REFRESH_REQUIRED" | "MOBILE_IN_USE"
+  | "MOBILE_UNCHANGED" | "MOBILE_RECENTLY_CHANGED" | "MOBILE_CHANGE_NOT_FOUND" | "SIGNATURE_UNREADABLE"
+  | "BIOMETRIC_QUALITY_LOW"
   // cash and forex
   | "INSUFFICIENT_FUNDS" | "LIMIT_EXCEEDED" | "CASSETTE_UNAVAILABLE" | "QUOTE_EXPIRED" | "DEPOSIT_LIMIT_EXCEEDED"
   | "DEPOSIT_ALREADY_CREDITED"
@@ -162,8 +166,10 @@ export interface DocumentVerified {
 /** B-5: onboarding (applicationId + verificationId) or a returning customer (customerId or lookupRef). */
 export interface BiometricRequest {
   applicationId?: string; verificationId?: string; customerId?: string; lookupRef?: string;
+  /** Phone lost (no code possible): send face AND fingerprint. The token then only allows the number change (M-4, M-5). */
+  purpose?: "MOBILE_CHANGE";
   face?: { image: string; livenessScore: number; livenessVendor?: string };
-  fingerprint?: { finger: "RIGHT_THUMB" | "LEFT_THUMB" | "RIGHT_INDEX" | "LEFT_INDEX"; template?: string; quality: number };
+  fingerprint?: { finger: Finger; template?: string; quality: number };
 }
 export interface BiometricResult {
   face?: { against: string; score: number; result: "MATCH" | "NO_MATCH" };
@@ -172,7 +178,12 @@ export interface BiometricResult {
   attemptsLeft: number;
   /** Card services (customerId + lookupRef, after the OTP): the token that unlocks C-2 … C-10. */
   customerToken?: string;
+  /** Returning customers: are their fingerprints already with the bank? offerEnrolment true: offer M-3. */
+  bankEnrolment?: { enrolled: boolean; fingers: Finger[]; offerEnrolment: boolean };
+  /** Set after the phone-lost check: the only thing this token may do. */
+  allows?: "MOBILE_CHANGE"[];
 }
+export type Finger = "RIGHT_THUMB" | "LEFT_THUMB" | "RIGHT_INDEX" | "LEFT_INDEX";
 
 /** B-7 */
 export interface KraResult { valid: boolean; taxpayerName: string; matchesId: boolean; status: string }
@@ -212,7 +223,11 @@ export interface KycStatus {
 }
 
 /** B-9 / B-10 */
-export interface OtpSendRequest { purpose: "ONBOARDING_PHONE" | "CARD_SERVICES"; applicationId?: string; lookupRef?: string; mobile?: string; channel?: "SMS" }
+export interface OtpSendRequest {
+  /** MOBILE_CHANGE: the code goes to the NEW number of the change opened at M-4 (changeRef). */
+  purpose: "ONBOARDING_PHONE" | "CARD_SERVICES" | "MOBILE_CHANGE";
+  applicationId?: string; lookupRef?: string; changeRef?: string; mobile?: string; channel?: "SMS";
+}
 export interface OtpSent { otpRef: string; maskedMobile: string; length: number; expiresInSec: number; resendAfterSec: number }
 export interface OtpVerified { verified: true; attemptsLeft: number }
 
@@ -224,6 +239,8 @@ export interface AccountOpened {
   applicationId: string; status: "ACCOUNT_OPENED"; customerId: string;
   account: { accountId: string; accountNumber: string; display: string; product: string; branch: string };
   customerToken: string; cardOrderAllowed: boolean; nameOnCard: string; reference: string; smsSent: boolean;
+  /** What went to core banking with the account: the specimen signature (B-11) and the thumbprint from B-5. */
+  mandate: { signatureRegistered: boolean; biometricsEnrolled: boolean };
 }
 /** B-13 */
 export interface ApplicationView {
@@ -241,12 +258,77 @@ export type LookupRequest =
   | { by: "ID_DOCUMENT"; documentType: DocumentType; documentNumber: string; images?: DocumentVerifyRequest["images"] };
 export interface LookupResult {
   lookupRef: string; customerId: string; displayName: string; maskedMobile: string; accountsFound: number;
-  verificationRequired: ("OTP" | "BIOMETRIC")[];
+  verificationRequired: ("OTP" | "FINGERPRINT")[];
 }
 /** C-2 */
-export interface CardView { cardId: string; maskedPan: string; product: CardProduct; status: string; expiry: string; linkedAccountId: string }
+export type CardStatus = "INACTIVE_PIN_REQUIRED" | "ACTIVE" | "TEMP_BLOCKED" | "BLOCKED" | "PIN_LOCKED" | "EXPIRED";
+/** What the kiosk may offer for a card. BLOCK_AND_REPLACE: C-10 then C-5 REPLACEMENT. */
+export type CardAction = "PIN_CHANGE" | "PIN_RESET" | "TEMPORARY_BLOCK" | "UNBLOCK" | "BLOCK_AND_REPLACE" | "REPLACEMENT" | "NEW_CARD_SETUP";
+/** C-2 and P-1. A customer can hold several cards: show one row per card with statusText and the buttons in actions. */
+export interface CardView {
+  cardId: string; maskedPan: string; product: CardProduct;
+  status: CardStatus;
+  statusText: string;              // in the session language: "Blocked: reported lost"
+  reason?: string;                 // BLOCKED: LOST, STOLEN, DAMAGED, EXPIRED; TEMP_BLOCKED: MISPLACED, SUSPICIOUS, TRAVEL, OTHER
+  since?: Iso;                     // when it was blocked
+  expiry: string;                  // yyyy-MM
+  expired: boolean; expiresSoon: boolean;
+  pinSet: boolean; pinAttemptsLeft: number;
+  linkedAccountId: string; linkedAccount?: string; accountStatus?: AccountStatus;
+  usable: boolean;                 // ACTIVE card on an ACTIVE account
+  actions: CardAction[];
+}
+export type AccountStatus = "ACTIVE" | "DORMANT" | "FROZEN" | "CLOSED" | (string & {});
 /** C-3 */
-export interface AccountForCard { accountId: string; type: string; masked: string; available: Money; hasCard: boolean; eligible: boolean; reason?: string }
+export interface AccountForCard {
+  accountId: string; type: string; masked: string; available: Money;
+  status: AccountStatus; canTransact: boolean; lastActivityAt: Iso | null;
+  statusText?: string; nextStep?: "ACCOUNT_REACTIVATION" | "TELLER";
+  hasCard: boolean; cards: number; eligible: boolean; reason?: string;
+}
+
+// ------------------------------------------------------------------------- P: looking after a card
+
+/** P-2 … P-5 answer with the card's new status and a reference for the receipt. */
+export interface CardServiceDone {
+  cardId: string; maskedPan: string; status: CardStatus; reference: string;
+  pinChanged?: true; pinReset?: true; unlocked?: boolean; temporarilyBlocked?: true; unblocked?: true;
+}
+export interface PinChangeRequest { currentPinBlock: string; newPinBlock: string; format?: string; keySerialNumber?: string; confirmed?: boolean }
+export interface PinResetRequest { newPinBlock: string; format?: string; keySerialNumber?: string; confirmed?: boolean }
+export type TempBlockReason = "MISPLACED" | "SUSPICIOUS" | "TRAVEL" | "OTHER";
+
+// ------------------------------------------------------------------------- M: customers the bank already knows
+
+/** How the customer token was earned. BIOMETRIC_ONLY (phone lost) only allows the number change. */
+export type CustomerAuth = "CARD_PIN" | "VERIFIED_IDENTITY" | "BIOMETRIC_ONLY" | "ONBOARDING";
+/** M-1. suggestions: what the kiosk should offer this customer to complete. */
+export interface CustomerProfile {
+  customerId: string; firstName: string; maskedMobile: string;
+  mobileChangedAt: Iso | null;
+  /** active: the number changed recently, so PIN reset, unblock, card orders, reactivation and signature wait. */
+  mobileHold: { active: boolean; hoursLeft: number };
+  verifiedBy: CustomerAuth;
+  kyc: Pick<KycStatus, "status" | "nextReviewDue" | "kraPinOnFile" | "selfServiceAllowed" | "flags">;
+  biometrics: { enrolled: boolean; fingers: Finger[]; enrolledAt: Iso | null; source: string | null };
+  signature: { onFile: boolean; capturedAt: Iso | null; source: string | null };
+  accounts: { total: number; active: number; dormant: number; restricted: number };
+  cards: { total: number; active: number; needAttention: number };
+  suggestions: ("ENROL_BIOMETRICS" | "REGISTER_SIGNATURE" | "REACTIVATE_ACCOUNT" | "KYC_REFRESH_WITH_TELLER")[];
+}
+/** M-2 */
+export interface AccountReactivated { accountId: string; masked: string; type: string; status: AccountStatus; reactivated: boolean; reference?: string }
+/** M-3 */
+export interface EnrolBiometricsRequest { fingerprints: { finger: Finger; template: string; quality: number }[]; consent: boolean }
+export interface BiometricsEnrolled { enrolled: true; fingers: Finger[]; enrolledAt: Iso; reference: string }
+/** M-4 */
+export interface MobileChangeStarted { changeRef: string; maskedCurrentMobile: string; maskedNewMobile: string; nextStep: "OTP"; otpPurpose: "MOBILE_CHANGE" }
+/** M-5. holdHours: how long the sensitive services wait after the change. */
+export interface MobileChanged { changed: true; maskedMobile: string; holdHours: number; reference?: string }
+/** M-6 */
+export interface SignatureOnFile { onFile: boolean; signatureId: string | null; capturedAt: Iso | null; source: string | null }
+/** M-7 */
+export interface SignatureRegistered { signatureId: string; capturedAt: Iso; replacedPrevious: boolean; reference: string }
 
 /** C-4 */
 export interface FeeQuoteRequest { service: "CARD_ISSUE" | "CARD_REPLACEMENT"; cardProduct: CardProduct; debitAccountId: string }
@@ -283,7 +365,7 @@ export interface CardActivated {
   limits: { atmDaily: Money; posDaily: Money }; reference: string;
 }
 /** C-10 */
-export interface CardBlocked { cardId: string; status: string; blockedAt: Iso; reason: string }
+export interface CardBlocked { cardId: string; maskedPan: string; status: string; blockedAt: Iso; reason: string; reference: string }
 
 /** S-1 card inserted */
 export interface CardAuthRequest {
@@ -296,6 +378,8 @@ export interface PinVerifyRequest { cardAuthRef: string; pinBlock: string; forma
 export interface PinVerified {
   verified: true; customerToken: string; customerId: string; customerFirstName: string;
   accounts: { accountId: string; type: string; masked: string; primary: boolean }[];
+  /** Accounts that cannot transact: show them greyed out with the next step. */
+  restrictedAccounts?: { accountId: string; type: string; masked: string; status: AccountStatus; nextStep: "ACCOUNT_REACTIVATION" | "TELLER" }[];
 }
 
 // ------------------------------------------------------------------------- S / K / W / X: money

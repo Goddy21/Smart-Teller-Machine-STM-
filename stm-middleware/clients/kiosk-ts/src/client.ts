@@ -11,6 +11,8 @@ import type {
   SmsRequest, StartApplicationRequest, StartSessionRequest, Statement, StatementOption, StatementRequest,
   SubmitRequest, Tariffs, TellerCall, TellerCallRequest, Terms, WithdrawalAuthorised, WithdrawalLimits,
   WithdrawConfirmRequest, WithdrawRequest, WsTicket,
+  AccountReactivated, BiometricsEnrolled, CardServiceDone, CustomerProfile, EnrolBiometricsRequest, MobileChanged,
+  MobileChangeStarted, PinChangeRequest, PinResetRequest, SignatureOnFile, SignatureRegistered, TempBlockReason,
 } from "./types";
 
 export interface StmClientOptions {
@@ -63,7 +65,8 @@ export class StmApiError extends Error {
  *   TELLER       E-screen "Talk to a teller" (referral, attempts used up, identity mismatch)
  *   SERVICE_DOWN E-screen "Service unavailable" (core down, module disabled, video down)
  *   SESSION      back to A0: the session ended or the device must sign in again
- *   CARD         card kept or returned (PIN tries exceeded, blocked, expired)
+ *   CARD         card kept or returned (PIN tries exceeded, blocked, expired), or it needs a card service first
+ *                (details.nextStep: UNBLOCK, PIN_RESET, CARD_REPLACEMENT)
  *   GENERIC      "Something went wrong" with the reference (requestId)
  */
 export type ErrorScreen = "RETRY_STEP" | "TELLER" | "SERVICE_DOWN" | "SESSION" | "CARD" | "GENERIC";
@@ -71,19 +74,26 @@ export type ErrorScreen = "RETRY_STEP" | "TELLER" | "SERVICE_DOWN" | "SESSION" |
 export function errorScreen(e: unknown): ErrorScreen {
   if (!(e instanceof StmApiError)) return "GENERIC";
   switch (e.code) {
-    case "OTP_INCORRECT": case "PIN_INCORRECT": case "PIN_POLICY": case "KRA_PIN_INVALID": case "RESEND_TOO_SOON":
+    case "OTP_INCORRECT": case "PIN_INCORRECT": case "PIN_POLICY": case "PIN_UNCHANGED": case "PIN_NOT_CONFIRMED": case "SIGNATURE_UNREADABLE":
+    case "BIOMETRIC_QUALITY_LOW": case "MOBILE_UNCHANGED": case "CONSENT_REQUIRED": case "KRA_PIN_INVALID": case "RESEND_TOO_SOON":
     case "QUOTE_EXPIRED": case "LIMIT_EXCEEDED": case "INSUFFICIENT_FUNDS": case "DEPOSIT_LIMIT_EXCEEDED": case "VALIDATION_ERROR":
       return "RETRY_STEP";
     case "IDENTITY_MISMATCH": case "BIOMETRIC_NO_MATCH":
       return (e.details.attemptsLeft as number | undefined) === 0 ? "TELLER" : "RETRY_STEP";
-    case "SCREENING_REFERRED": case "OTP_TRIES_EXCEEDED": case "SIM_SWAP_RISK":
+    case "SCREENING_REFERRED": case "OTP_TRIES_EXCEEDED": case "SIM_SWAP_RISK": case "ACCOUNT_RESTRICTED":
+    case "KYC_REFRESH_REQUIRED": case "MOBILE_IN_USE": case "MOBILE_RECENTLY_CHANGED":
       return "TELLER";
+    // Not failures of the kiosk: show the message and the next step in details.nextStep
+    // (STEP_UP_REQUIRED: C-1 + code + thumbprint, then call again; ACCOUNT_DORMANT: M-2).
+    case "STEP_UP_REQUIRED": case "ACCOUNT_DORMANT":
+      return "RETRY_STEP";
     case "CORE_UNAVAILABLE": case "SERVICE_UNAVAILABLE": case "OUT_OF_SERVICE": case "VIDEO_UNAVAILABLE":
     case "CASSETTE_UNAVAILABLE": case "NETWORK_ERROR":
       return "SERVICE_DOWN";
     case "SESSION_INVALID": case "DEVICE_UNAUTHORIZED": case "APPLICATION_EXPIRED":
       return "SESSION";
-    case "PIN_TRIES_EXCEEDED": case "CARD_BLOCKED": case "CARD_EXPIRED":
+    case "PIN_TRIES_EXCEEDED": case "CARD_BLOCKED": case "CARD_EXPIRED": case "CARD_TEMP_BLOCKED": case "PIN_LOCKED":
+    case "CARD_BLOCKED_PERMANENT":
       return "CARD";
     default:
       return "GENERIC";
@@ -263,7 +273,7 @@ export class StmClient {
 
   // ================================================================== S: card + PIN, C: card services
 
-  /** S-1. Card inserted. 403 CARD_BLOCKED / CARD_EXPIRED carry details.cardAction (RETAIN / RETURN). */
+  /** S-1. Card inserted. 403 CARD_BLOCKED, CARD_EXPIRED, CARD_TEMP_BLOCKED and PIN_LOCKED carry details.cardAction (RETAIN / RETURN). */
   cardInserted(r: CardAuthRequest) { return this.call<CardAuth>("POST", "/auth/card", r); }
   /** S-2. pinBlock from the PIN pad. Sets the customer token. */
   async verifyPin(r: PinVerifyRequest) {
@@ -308,6 +318,56 @@ export class StmClient {
   /** C-10 */
   blockCard(cardId: string, reason: "LOST" | "STOLEN" | "DAMAGED" | "EXPIRED") {
     return this.call<CardBlocked>("POST", `/cards/${cardId}/block`, { reason }, { customer: true });
+  }
+
+  // ================================================================== P: looking after a card
+
+  /** P-1. One card in full: status, why, and which actions to offer. */
+  cardStatus(cardId: string) { return this.call<CardView>("GET", `/cards/${cardId}/status`, undefined, { customer: true }); }
+  /** P-2. The customer knows the PIN. 401 PIN_INCORRECT carries details.attemptsLeft; at 0 the card is PIN_LOCKED. */
+  changePin(cardId: string, r: PinChangeRequest) {
+    return this.call<CardServiceDone>("POST", `/cards/${cardId}/pin/change`, { format: "ISO_9564_FORMAT_4", confirmed: true, ...r }, { customer: true });
+  }
+  /** P-3. Forgot the PIN or locked the card. Needs the code + thumbprint token (403 STEP_UP_REQUIRED after card + PIN). */
+  resetPin(cardId: string, r: PinResetRequest) {
+    return this.call<CardServiceDone>("POST", `/cards/${cardId}/pin/reset`, { format: "ISO_9564_FORMAT_4", confirmed: true, ...r }, { customer: true });
+  }
+  /** P-4. A freeze the customer can lift (P-5). Lost or stolen: blockCard (C-10), then a replacement. */
+  temporaryBlockCard(cardId: string, reason: TempBlockReason = "MISPLACED") {
+    return this.call<CardServiceDone>("POST", `/cards/${cardId}/temporary-block`, { reason }, { customer: true });
+  }
+  /** P-5. Lifts a temporary block. Needs the code + thumbprint token. */
+  unblockCard(cardId: string) { return this.call<CardServiceDone>("POST", `/cards/${cardId}/unblock`, {}, { customer: true }); }
+
+  // ================================================================== M: customers the bank already knows
+
+  /** Every account with its state (ACTIVE, DORMANT, FROZEN …), canTransact and how many cards it has. */
+  accounts(customerId: string) {
+    return this.call<{ accounts: AccountForCard[] }>("GET", `/customers/${customerId}/accounts`, undefined, { customer: true }).then((r) => r.accounts);
+  }
+  /** M-1. What the bank has on file (fingerprints, signature, KYC) and what to offer: suggestions. */
+  customerProfile(customerId: string) { return this.call<CustomerProfile>("GET", `/customers/${customerId}/profile`, undefined, { customer: true }); }
+  /** M-2. Wakes a dormant account. 403 KYC_REFRESH_REQUIRED / ACCOUNT_RESTRICTED: offer a teller. */
+  reactivateAccount(accountId: string) {
+    return this.call<AccountReactivated>("POST", `/accounts/${accountId}/reactivate`, { confirmed: true }, { customer: true });
+  }
+  /** M-3. Gives the bank the customer's fingerprints (each is checked against the national registry). */
+  enrolBiometrics(customerId: string, r: EnrolBiometricsRequest) {
+    return this.call<BiometricsEnrolled>("POST", `/customers/${customerId}/biometrics/enrol`, r, { customer: true });
+  }
+  /** M-4. Opens a change of phone number. Then sendOtp({ purpose: "MOBILE_CHANGE", changeRef }), verifyOtp, and M-5. */
+  startMobileChange(customerId: string, newMobile: string) {
+    return this.call<MobileChangeStarted>("POST", `/customers/${customerId}/mobile-change`, { newMobile }, { customer: true });
+  }
+  /** M-5. Changes the number in core banking once the code sent to the new number was verified. */
+  confirmMobileChange(customerId: string, changeRef: string) {
+    return this.call<MobileChanged>("POST", `/customers/${customerId}/mobile-change/${changeRef}/confirm`, {}, { customer: true });
+  }
+  /** M-6. Is there a specimen signature? (The image itself never comes back to the kiosk.) */
+  signature(customerId: string) { return this.call<SignatureOnFile>("GET", `/customers/${customerId}/signature`, undefined, { customer: true }); }
+  /** M-7. Registers or replaces the specimen signature. 422 SIGNATURE_UNREADABLE: ask the customer to sign again. */
+  registerSignature(customerId: string, r: SignatureRequest) {
+    return this.call<SignatureRegistered>("POST", `/customers/${customerId}/signature`, r, { customer: true });
   }
 
   // ================================================================== S-3 … S-6: balance and statements

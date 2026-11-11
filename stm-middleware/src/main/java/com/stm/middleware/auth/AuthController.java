@@ -24,7 +24,22 @@ public class AuthController {
 
     public record PasswordRequest(@NotBlank String currentPassword, @NotBlank @Size(max = 128) String newPassword) {}
 
-    public record LoginResponse(String token, java.time.OffsetDateTime expiresAt, PortalUser user) {}
+    public record OtpRequest(@NotBlank @Size(max = 100) String challenge, @NotBlank @Size(max = 12) String code) {}
+
+    public record ResendRequest(@NotBlank @Size(max = 100) String challenge) {}
+
+    /**
+     * Either signed in (token, expiresAt, user) or, when the account has an email address, otpRequired with a challenge:
+     * the portal then asks for the emailed code and calls POST /login/otp.
+     */
+    public record LoginResponse(String token, java.time.OffsetDateTime expiresAt, PortalUser user, boolean otpRequired,
+                                String challenge, String maskedEmail, Integer expiresInSec, Integer resendAfterSec) {
+        static LoginResponse of(PortalAuthService.Login l) {
+            var o = l.otp();
+            return o == null ? new LoginResponse(l.token(), l.expiresAt(), l.user(), false, null, null, null, null)
+                    : new LoginResponse(null, null, null, true, o.challenge(), o.maskedEmail(), o.expiresInSec(), o.resendAfterSec());
+        }
+    }
 
     private final PortalAuthService auth;
 
@@ -34,8 +49,19 @@ public class AuthController {
 
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest r, HttpServletRequest req) {
-        PortalAuthService.Login l = auth.login(r.username(), r.password(), req.getRemoteAddr(), req.getHeader("User-Agent"));
-        return new LoginResponse(l.token(), l.expiresAt(), l.user());
+        return LoginResponse.of(auth.login(r.username(), r.password(), req.getRemoteAddr(), req.getHeader("User-Agent")));
+    }
+
+    /** Second step: the 6-digit code from the email. */
+    @PostMapping("/login/otp")
+    public LoginResponse otp(@Valid @RequestBody OtpRequest r, HttpServletRequest req) {
+        return LoginResponse.of(auth.verifyOtp(r.challenge(), r.code(), req.getRemoteAddr(), req.getHeader("User-Agent")));
+    }
+
+    /** A new code for the same sign-in: at most 3, one a minute. */
+    @PostMapping("/login/resend")
+    public LoginResponse resend(@Valid @RequestBody ResendRequest r, HttpServletRequest req) {
+        return LoginResponse.of(new PortalAuthService.Login(null, null, null, auth.resendOtp(r.challenge(), req.getRemoteAddr())));
     }
 
     @GetMapping("/me")

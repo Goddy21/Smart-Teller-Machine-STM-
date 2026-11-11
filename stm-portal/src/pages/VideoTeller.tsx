@@ -4,7 +4,7 @@ import type { SessionDetail } from "../api/portal";
 import type { Pane } from "../video/TellerConsole";
 import { Badge, Button, Card, Empty, fmt, Mono, useLoad } from "../ui/kit";
 import {
-  IconCamera, IconCheck, IconLink, IconMic, IconMicOff, IconMonitor, IconPhone, IconPhoneOff, IconVideo, IconVideoOff, IconX, IconZoom,
+  IconCamera, IconCheck, IconExpand, IconFullscreen, IconLink, IconShrink, IconMic, IconMicOff, IconMonitor, IconPhone, IconPhoneOff, IconVideo, IconVideoOff, IconX, IconZoom,
 } from "../ui/Icons";
 import { ApplicationPanel, SessionBody } from "./Sessions";
 import { flowLabel } from "../ui/labels";
@@ -95,6 +95,28 @@ function Stage() {
   const [zoom, setZoom] = useState(1);
   const [origin, setOrigin] = useState("50% 50%");
   const ref = (p: Pane) => (el: HTMLVideoElement | null) => teller.attach(p, el);
+  // One pane can be enlarged (the others shrink to a strip below it). The kiosk screen starts enlarged.
+  const [focus, setFocus] = useState<"face" | "id" | "screen" | null>(() => {
+    try { const v = localStorage.getItem("stm-video-focus"); return v === "none" ? null : ((v as "face" | "id" | "screen") ?? "screen"); } catch { return "screen"; }
+  });
+  const choose = (p: "face" | "id" | "screen") => {
+    const next = focus === p ? null : p;
+    setFocus(next);
+    try { localStorage.setItem("stm-video-focus", next ?? "none"); } catch { /* per-viewer convenience only */ }
+  };
+  const tools = (p: "face" | "id" | "screen") => (
+    <span className="pane__tools" onMouseMove={(e) => e.stopPropagation()}>
+      <button type="button" onClick={() => choose(p)} title={focus === p ? "Back to the normal layout" : "Make this view large"}
+              aria-label={focus === p ? "Shrink" : "Enlarge"}>
+        {focus === p ? <IconShrink /> : <IconExpand />}
+      </button>
+      <button type="button" title="Full screen (Esc to leave)" aria-label="Full screen"
+              onClick={(e) => { void (e.currentTarget.closest(".pane") as HTMLElement | null)?.requestFullscreen?.().catch(() => undefined); }}>
+        <IconFullscreen />
+      </button>
+    </span>
+  );
+  const cls = (p: "face" | "id" | "screen") => (focus === p ? "is-focus" : focus ? "is-thumb" : "");
 
   const pan = (e: MouseEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -104,23 +126,26 @@ function Stage() {
   return (
     <div className="stage">
       {state.banner && <div className="stage__banner" role="alert">{state.banner}</div>}
-      <div className="panes">
-        <div className={`pane pane--face ${state.panes.face ? "has" : ""}`}>
+      <div className={`panes ${focus ? "has-focus" : ""}`}>
+        <div className={`pane pane--face ${state.panes.face ? "has" : ""} ${cls("face")}`} onDoubleClick={() => choose("face")}>
           <video ref={ref("face")} autoPlay playsInline muted />
           <span className="pane__tag"><span className="rec" />Customer</span>
           <div className="pane__empty"><IconCamera /><span>Waiting for the customer camera</span></div>
+          {tools("face")}
           <CallTimer />
         </div>
-        <div className={`pane pane--id ${state.panes.id ? "has" : ""}`} onMouseMove={pan}>
+        <div className={`pane pane--id ${state.panes.id ? "has" : ""} ${cls("id")}`} onMouseMove={pan} onDoubleClick={() => choose("id")}>
           <video ref={ref("id")} autoPlay playsInline muted style={{ transform: `scale(${zoom})`, transformOrigin: origin }} />
           <span className="pane__tag">ID camera {zoom > 1 && `· ${zoom}×`}</span>
           <div className="pane__empty"><IconCamera /><span>Waiting for the second camera</span></div>
+          {tools("id")}
         </div>
-        <div className={`pane pane--screen ${state.panes.screen ? "has" : ""}`}>
+        <div className={`pane pane--screen ${state.panes.screen ? "has" : ""} ${cls("screen")}`} onDoubleClick={() => choose("screen")}>
           <video ref={ref("screen")} autoPlay playsInline muted />
           <span className="pane__tag">Kiosk screen (live)</span>
           <div className="pane__empty"><IconMonitor />
             <span>{state.screenHidden ? "Hidden: the customer is on a private screen (PIN or card)." : "Waiting for the kiosk screen"}</span></div>
+          {tools("screen")}
         </div>
       </div>
 

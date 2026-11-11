@@ -79,7 +79,7 @@ public class AccountController {
         if ("ACCOUNT".equals(req.type())) {
             String no = req.accountNumber() == null ? "" : req.accountNumber().replaceAll("\\s", "");
             if (!no.matches("\\d{10,13}")) throw Errors.validation("accountNumber", "Enter 10 to 13 digits");
-            CoreBanking.Account a = core.accountByNumber(no).filter(x -> "ACTIVE".equals(x.status()))
+            CoreBanking.Account a = core.accountByNumber(no).filter(x -> !"CLOSED".equals(x.status()))   // dormant and frozen accounts still take deposits
                     .orElseThrow(() -> Errors.notFound("ACCOUNT_NOT_FOUND", "We could not find this account.",
                             "Hatukupata akaunti hii."));
             String name = accountName(core.customer(a.customerId()).orElseThrow().fullName());

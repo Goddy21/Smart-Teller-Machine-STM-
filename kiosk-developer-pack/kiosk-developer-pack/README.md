@@ -10,7 +10,7 @@ Everything the kiosk app needs to talk to the Smart Teller middleware. The middl
 | Gateway base URL | `https://10.8.0.1:8443/stm/v1` |
 | Network | Reachable only over the server's **WireGuard VPN**. Ask Blue River for a VPN profile, one for your development machine and one for the STM. Needed: TCP 8443, TCP 7881, UDP 7882. |
 | HTTPS certificate | Private CA. Install `stm-server-ca.crt` (sent with this pack) as a trusted root on your machine and on the STM: double-click it → Install Certificate → Local Machine → Trusted Root Certification Authorities. Or run `install-server-certificate.ps1` as Administrator. |
-| API documentation | `docs/API.md` (all operations), `docs/ACCOUNT-OPENING.md` (screens B1–B10 step by step), `https://10.8.0.1:8443/swagger-ui.html` |
+| API documentation | `docs/API.md` (all operations), `docs/ACCOUNT-OPENING.md` (screens B1–B10 step by step), `docs/CARD-AND-CUSTOMER-SERVICES.md` (card care, PIN, phone number, existing customers), `https://10.8.0.1:8443/swagger-ui.html` |
 | Architecture | `docs/STM-Architecture.pdf` |
 
 ## 2. This machine's identity
@@ -65,12 +65,19 @@ This pilot server uses the terminal token.
 | Card eligibility | `GET /customers/{id}/accounts?eligibleFor=CARD` (eligible + reason per account) |
 | Fee quote and debit | `POST /fees/quote`, then the debit happens inside the card order (C-5 with `feeQuoteId` + `customerAuthorised: true`). Waivers are server-side. |
 | Create / replace card | `POST /cards/orders` `{service: LINK_AND_ISSUE \| REPLACEMENT \| NEW_CARD_SETUP}` → `cardId`, `personalisation.payloadForPrinter`; progress `GET /cards/orders/{id}` |
-| Hotlist card | `POST /cards/{id}/block` `{reason: LOST \| STOLEN \| DAMAGED \| EXPIRED}` (safe to repeat) |
+| Hotlist card | `POST /cards/{id}/block` `{reason: LOST \| STOLEN \| DAMAGED \| EXPIRED}` (safe to repeat; permanent) |
+| Validate a card | `GET /customers/{id}/cards` or `GET /cards/{id}/status`: `status` (ACTIVE, INACTIVE_PIN_REQUIRED, TEMP_BLOCKED, BLOCKED, PIN_LOCKED, EXPIRED), `statusText`, `reason` (LOST, STOLEN, DAMAGED …), `expiresSoon`, and `actions` = the buttons to show. A customer can hold several cards. |
+| PIN change / reset | `POST /cards/{id}/pin/change` (knows the PIN), `POST /cards/{id}/pin/reset` (forgot it or locked; needs code + thumbprint) |
+| Temporary block / unblock | `POST /cards/{id}/temporary-block`, `POST /cards/{id}/unblock` (needs code + thumbprint) |
+| Change phone number | `POST /customers/{id}/mobile-change`, OTP to the new number (`purpose: MOBILE_CHANGE`), `POST /customers/{id}/mobile-change/{changeRef}/confirm`. Phone lost: face + thumbprint instead of the code. |
+| Existing (pre-STM) customers | `GET /customers/{id}/profile` says what is on file and what to offer; `POST /customers/{id}/biometrics/enrol` (fingerprints), `POST /customers/{id}/signature` (specimen signature) |
+| Active or dormant account | `GET /customers/{id}/accounts`: `status` (ACTIVE, DORMANT, FROZEN, CLOSED), `canTransact`, `nextStep`; `POST /accounts/{id}/reactivate` wakes a dormant one |
 | Confirm issued / void | `POST /cards/orders/{id}/dispense` `{outcome: TAKEN \| RETAINED \| SPOILED}` |
 | Activate | `POST /cards/{id}/pin` (PIN block from the EPP), `POST /cards/{id}/activate` |
 | Audit events | `POST /devices/{id}/journal` (signed batches), plus the gateway's own audit of every call |
 
-Payloads and answers for each are in `docs/API.md`.
+Payloads and answers for each are in `docs/API.md`. The card, PIN, phone-number and existing-customer calls are
+explained step by step, with full URLs, in `docs/CARD-AND-CUSTOMER-SERVICES.md`.
 
 ## 5. Video: "Talk to a teller"
 
@@ -103,6 +110,7 @@ monitor. The terminal must be the device ID above.
 | ID 30111222 (MWANGI, 1990-01-09) | Juma | Face never matches |
 | ID 30333444 (OUMA) | Otieno | KRA PIN inactive |
 | ID 32145678, account 0123454521 | Achieng | Existing customer. Card `tok_4512xxxx4521`, PIN **2580**. Current account 0123457780 has no card yet. |
+| ID 25567890, accounts 0124417001 … 004 | Mary | Customer from before the Smart Teller: no fingerprints or signature on file. One dormant and one frozen account. Five cards, PIN **2468**: `tok_4512xxxx8101`, `…8102` active; `…8103` temporarily blocked; `…8104` blocked (damaged); `…8105` PIN locked. |
 | Account 0119876543 | Brian | SIM swapped 20 h ago (OTP blocked), KYC review overdue, no KRA PIN on file |
 | Passport P12345678 (GBR) | John Smith | Visitor, for forex |
 
@@ -115,7 +123,7 @@ monitor. The terminal must be the device ID above.
 - **Postman:** import `postman/STM-Gateway.postman_collection.json` and `postman/STM-Server.postman_environment.json`.
   Select the environment and paste the terminal token into `terminalToken`. Turn off SSL certificate verification in
   Postman's settings, or add `stm-server-ca.crt` there. Run the request **"D-1 Device token"** in folder 0 first,
-  then any journey folder. Skip "Register a demo terminal": your machine is already registered.
+  then any journey folder (4c and 4d are the card-care and existing-customer journeys). Skip "Register a demo terminal": your machine is already registered.
 - **TypeScript client:** `kiosk-ts/` (copy `src/` into the app). `vite.config.example.ts` proxies `/stm` to the
   server during development, so there is no CORS to configure. If the kiosk app will be served from its own address
   (not through a proxy), send us that origin, for example `http://localhost:5173`, and we will allow it on the server.

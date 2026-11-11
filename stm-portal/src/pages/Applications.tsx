@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { usePortal } from "../context";
-import { Badge, Card, Empty, ErrorNote, fmt, Mono, Segmented, Spinner, useLoad } from "../ui/kit";
-import { IconShield } from "../ui/Icons";
+import { Badge, Card, Empty, ErrorNote, fmt, Mono, Pager, Segmented, Spinner, useDebounced, useLoad, usePaging } from "../ui/kit";
+import { IconSearch, IconShield } from "../ui/Icons";
 import { ApplicationPanel, initials } from "./Sessions";
 
 type Filter = "teller" | "open" | "opened" | "all";
@@ -11,20 +11,26 @@ export function Applications() {
   const { portal } = usePortal();
   const [filter, setFilter] = useState<Filter>("teller");
   const [sel, setSel] = useState<string | null>(null);
-  const list = useLoad(() => portal.applications(filter === "teller" ? { needsTeller: true } : filter === "opened" ? { status: "ACCOUNT_OPENED" } : {}),
-    [filter], 8000);
-  const rows = (list.data ?? []).filter((a) => filter !== "open" || !["ACCOUNT_OPENED", "CANCELLED", "REJECTED", "EXPIRED"].includes(a.status));
+  const [q, setQ] = useState("");
+  const dq = useDebounced(q.trim());
+  const paging = usePaging("applications", [filter, dq]);
+  const list = useLoad(() => portal.applicationsPage({ view: filter, q: dq || undefined, page: paging.page, size: paging.size }),
+    [filter, dq, paging.page, paging.size], 8000);
+  const rows = list.data?.items ?? [];
   const current = sel ?? rows[0]?.id ?? null;
 
   return (
     <div className="grid-2-1 grid-2-1--rev">
       <Card pad={false} title="Applications" subtitle="Open an account at the kiosk"
-            actions={<Segmented value={filter} onChange={(f) => { setFilter(f); setSel(null); }} options={[
-              { value: "teller", label: "Kiosk waiting" },
-              { value: "open", label: "In progress" },
-              { value: "opened", label: "Opened" },
-              { value: "all", label: "All" },
-            ]} />}>
+            actions={<div className="toolbar toolbar--wrap">
+              <label className="search"><IconSearch /><input value={q} onChange={(e) => { setQ(e.target.value); setSel(null); }} placeholder="Name, account, kiosk…" /></label>
+              <Segmented value={filter} onChange={(f) => { setFilter(f); setSel(null); }} options={[
+                { value: "teller", label: "Kiosk waiting" },
+                { value: "open", label: "In progress" },
+                { value: "opened", label: "Opened" },
+                { value: "all", label: "All" },
+              ]} />
+            </div>}>
         {list.error && !list.data ? <div className="card__body"><ErrorNote error={list.error} onRetry={list.reload} /></div>
           : !list.data ? <div className="card__body"><Spinner /></div>
           : rows.length === 0 ? <Empty icon={<IconShield />} title={filter === "teller" ? "No kiosk is waiting for a teller" : "No applications"}>
@@ -46,6 +52,7 @@ export function Applications() {
               ))}
             </ul>
           )}
+        <Pager data={list.data} onPage={paging.setPage} onSize={paging.setSize} compact />
       </Card>
       {current ? <Detail id={current} onChange={list.reload} /> : <Card><Empty title="Pick an application" /></Card>}
     </div>

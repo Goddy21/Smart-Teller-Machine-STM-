@@ -53,13 +53,21 @@ public class CardAuthController {
         }
         CardSystem.Card c = found.get();
         switch (c.status()) {
-            case "BLOCKED", "PIN_LOCKED", "DESTROYED" -> {
+            case "PIN_LOCKED" -> {     // locked by wrong PINs earlier: give it back, the PIN is reset in Card Services
+                audit.session(ctx, "CARD_REJECTED", "cardId", c.id(), "status", c.status(), "cardAction", "RETURN");
+                throw Errors.pinLocked().detail("cardAction", "RETURN");
+            }
+            case "BLOCKED", "DESTROYED" -> {
                 audit.session(ctx, "CARD_REJECTED", "cardId", c.id(), "status", c.status(), "cardAction", "RETAIN");
                 throw Errors.cardBlocked("RETAIN");
             }
             case "EXPIRED" -> {
                 audit.session(ctx, "CARD_REJECTED", "cardId", c.id(), "status", c.status(), "cardAction", "RETURN");
                 throw Errors.cardExpired();
+            }
+            case "TEMP_BLOCKED" -> {   // the customer froze it: give it back, they can unblock it in Card Services
+                audit.session(ctx, "CARD_REJECTED", "cardId", c.id(), "status", c.status(), "cardAction", "RETURN");
+                throw Errors.cardTempBlocked().detail("nextStep", "UNBLOCK");
             }
             default -> { }
         }
@@ -98,6 +106,7 @@ public class CardAuthController {
             if ("INACTIVE_PIN_REQUIRED".equals(card.status())) {
                 throw Errors.wrongState("This card has no PIN yet. Use Card Services, New Card Setup.").detail("cardAction", "RETURN");
             }
+            if ("TEMP_BLOCKED".equals(card.status())) throw Errors.cardTempBlocked().detail("nextStep", "UNBLOCK");
             throw Errors.cardBlocked("RETAIN");
         }
         CardSystem.PinCheck check = cms.verifyPin(a.cardId(), req.pinBlock().toUpperCase(), req.format(), req.keySerialNumber());
@@ -114,8 +123,18 @@ public class CardAuthController {
         CoreBanking.Customer c = core.customer(a.customerId()).orElseThrow();
         sessions.setCustomer(ctx.sessionId(), c.id(), c.fullName());
         List<Map<String, Object>> accounts = new ArrayList<>();
+        List<Map<String, Object>> restricted = new ArrayList<>();   // dormant, frozen or closed: shown, not usable
         for (CoreBanking.Account acc : core.accounts(c.id())) {
-            if (!"ACTIVE".equals(acc.status())) continue;
+            if (!"ACTIVE".equals(acc.status())) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("accountId", acc.id());
+                m.put("type", acc.type());
+                m.put("masked", acc.masked());
+                m.put("status", acc.status());
+                m.put("nextStep", acc.dormant() ? "ACCOUNT_REACTIVATION" : "TELLER");
+                restricted.add(m);
+                continue;
+            }
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("accountId", acc.id());
             m.put("type", acc.type());
@@ -131,6 +150,7 @@ public class CardAuthController {
         out.put("customerId", c.id());
         out.put("customerFirstName", c.firstName());
         out.put("accounts", accounts);
+        if (!restricted.isEmpty()) out.put("restrictedAccounts", restricted);
         return out;
     }
 }

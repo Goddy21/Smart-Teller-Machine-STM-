@@ -1,0 +1,26 @@
+### 1. Termina Details
+
+| Item | Value |
+|---|---|
+| Base URL | `https://10.8.0.1:8443/stm/v1` |
+| Device ID (`X-Device-Id`) | `STM-NBO-MOI-03` |
+| Branch | `012` (Moi Avenue) |
+| HTTPS certificate | `stm-server-ca.crt` (from `stm-files`), installed as a trusted root |
+| Upper screen | `https://10.8.0.1:8443/kiosk/teller-display.html?terminal=STM-NBO-MOI-03` |
+| API docs | `https://10.8.0.1:8443/swagger-ui.html` and the docs folder | # Just incase unataka kuona endpoits zote.
+
+**Test data** (the server simulates the bank, so these are not real secrets):
+
+| What | Value |
+|---|---|
+| OTP | `123456` |
+| New customer | ID `29876543`, KAMAU, 1996-07-22, KRA PIN `A029876543K` |
+| Existing customer | Achieng: ID `32145678`, account `0123454521`, card `tok_4512xxxx4521`, PIN `2580` |
+| PIN block (no PIN pad) | PIN `2580` → `042580FFFFFFFFFF` |
+
+### 2. Token
+
+| Item | Value | Notes |
+|---|---|---|
+| Terminal token | `8ZYkijpvSf-sNqj7MJZ7CzeJq6o5ReHm0I1vH0xj3sE` | For `STM-NBO-MOI-03`. 
+| VPN profile # Download hii file nimekutumia then udownload wireguard from wireguard.com/install alafu uload hiyo file kwa wireguard ndio ikupee access ya server.

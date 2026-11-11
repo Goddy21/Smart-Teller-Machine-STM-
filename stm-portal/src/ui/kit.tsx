@@ -55,7 +55,9 @@ const TONES: Record<string, Tone> = {
   MATCH: "good", NO_MATCH: "bad", PASS: "good", FAIL: "bad", NOT_FOUND: "bad", CLEAR: "good", HIT: "warn",
   // cards
   PERSONALISING: "info", PRINTING: "info", READY: "info", DONE: "good", DISPENSED: "good", TAKEN: "good", RETAINED: "bad", SPOILED: "bad", FAILED: "bad", ORDERED: "info",
-  BLOCKED: "bad", EXPIRED_CARD: "neutral",
+  BLOCKED: "bad", EXPIRED_CARD: "neutral", TEMP_BLOCKED: "warn", PIN_LOCKED: "warn", INACTIVE_PIN_REQUIRED: "info",
+  // accounts
+  DORMANT: "warn", FROZEN: "bad", CLOSED: "neutral",
   // cash
   AWAITING_CASH: "info", AUTHORISED: "info", PENDING_RECONCILIATION: "warn", UNKNOWN: "warn", COUNTED: "info", CREDITED: "good", RETURNED: "neutral", COMPLETED: "good", PRESENTED: "info",
   RETRACTED: "warn", REVERSED: "warn", QUOTED: "info", DISPENSING: "info",
@@ -229,4 +231,76 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[], pollMs?: num
   }, [...deps, tick, pollMs]);
 
   return { data, error, loading, reload: () => setTick((t) => t + 1), setData };
+}
+
+// ------------------------------------------------------------------ paging
+
+/** A server page: items plus where they sit in the whole list. counts: totals per filter tab, when the list has tabs. */
+export interface Page<T> {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+  counts?: Record<string, number> | null;
+}
+
+const PAGE_SIZES = [25, 50, 100];
+
+/**
+ * Page and page size for one list. The page goes back to 1 when `resetOn` changes (a new filter or search).
+ * The size is remembered per list in this browser.
+ */
+export function usePaging(key: string, resetOn: unknown[], defaultSize = 25) {
+  const [page, setPage] = useState(1);
+  const [size, setSizeState] = useState(() => {
+    try { const v = Number(localStorage.getItem(`stm.pageSize.${key}`)); return PAGE_SIZES.includes(v) ? v : defaultSize; } catch { return defaultSize; }
+  });
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, resetOn);
+  const setSize = (n: number) => {
+    setSizeState(n); setPage(1);
+    try { localStorage.setItem(`stm.pageSize.${key}`, String(n)); } catch { /* per-browser convenience only */ }
+  };
+  return { page, size, setPage, setSize };
+}
+
+/** The text after it stops changing for `ms` (for search boxes that query the server). */
+export function useDebounced<T>(value: T, ms = 350) {
+  const [v, setV] = useState(value);
+  useEffect(() => { const t = setTimeout(() => setV(value), ms); return () => clearTimeout(t); }, [value, ms]);
+  return v;
+}
+
+/** "Showing 26–50 of 1,240" with page size and Previous / Next. Hidden when there is nothing to page. */
+export function Pager({ data, onPage, onSize, compact }: {
+  data: Page<unknown> | null | undefined; onPage: (p: number) => void; onSize?: (n: number) => void; compact?: boolean;
+}) {
+  if (!data || data.total === 0) return null;
+  const from = (data.page - 1) * data.size + 1;
+  const to = Math.min(data.total, data.page * data.size);
+  const n = (x: number) => x.toLocaleString("en-KE");
+  return (
+    <div className={`pager ${compact ? "pager--compact" : ""}`}>
+      <span className="pager__info">{compact ? `${n(from)}–${n(to)} of ${n(data.total)}` : <>Showing <b>{n(from)}–{n(to)}</b> of <b>{n(data.total)}</b></>}</span>
+      {onSize && !compact && (
+        <label className="pager__size">Rows
+          <select className="select select--sm" value={data.size} onChange={(e) => onSize(Number(e.target.value))}>
+            {PAGE_SIZES.map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
+        </label>
+      )}
+      <span className="pager__nav">
+        <button type="button" className="btn btn--secondary btn--sm" disabled={data.page <= 1} onClick={() => onPage(1)} aria-label="First page" title="First page">«</button>
+        <button type="button" className="btn btn--secondary btn--sm" disabled={data.page <= 1} onClick={() => onPage(data.page - 1)}>Previous</button>
+        <span className="pager__page">Page {n(data.page)} of {n(data.pages)}</span>
+        <button type="button" className="btn btn--secondary btn--sm" disabled={data.page >= data.pages} onClick={() => onPage(data.page + 1)}>Next</button>
+        <button type="button" className="btn btn--secondary btn--sm" disabled={data.page >= data.pages} onClick={() => onPage(data.pages)} aria-label="Last page" title="Last page">»</button>
+      </span>
+    </div>
+  );
 }

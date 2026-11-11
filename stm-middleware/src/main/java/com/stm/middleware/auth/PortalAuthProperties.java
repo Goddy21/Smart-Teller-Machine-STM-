@@ -15,9 +15,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties(prefix = "stm.portal-auth")
 public record PortalAuthProperties(int idleMinutes, int absoluteHours, int maxFailedAttempts, int lockMinutes,
-                                   boolean allowSharedKey, String bootstrapAdminPassword) {
+                                   boolean allowSharedKey, String bootstrapAdminPassword,
+                                   Boolean emailOtp, int otpMinutes, int otpMaxAttempts) {
     public int idle() { return idleMinutes > 0 ? idleMinutes : 30; }
     public int absolute() { return absoluteHours > 0 ? absoluteHours : 10; }
     public int maxFailures() { return maxFailedAttempts > 0 ? maxFailedAttempts : 5; }
     public int lock() { return lockMinutes > 0 ? lockMinutes : 15; }
+    public boolean otp() { return emailOtp == null || emailOtp; }
+    public int otpMins() { return otpMinutes > 0 ? otpMinutes : 5; }
+    public int otpTries() { return otpMaxAttempts > 0 ? otpMaxAttempts : 5; }
 }

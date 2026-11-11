@@ -37,6 +37,30 @@ public class SmsService {
             Map.entry("CARD_BLOCKED", new String[]{
                     "Your card {card} has been blocked ({reason}). If this was not you, call us now.",
                     "Kadi yako {card} imezuiwa ({reason}). Ikiwa si wewe, tupigie sasa."}),
+            Map.entry("CARD_PIN_CHANGED", new String[]{
+                    "The PIN of your card {card} was changed at a Smart Teller. If this was not you, call us now.",
+                    "PIN ya kadi yako {card} imebadilishwa kwenye Smart Teller. Ikiwa si wewe, tupigie sasa."}),
+            Map.entry("CARD_TEMP_BLOCKED", new String[]{
+                    "Your card {card} is temporarily blocked. You can unblock it at any Smart Teller.",
+                    "Kadi yako {card} imezuiwa kwa muda. Unaweza kuifungua kwenye Smart Teller yoyote."}),
+            Map.entry("CARD_UNBLOCKED", new String[]{
+                    "Your card {card} is unblocked and ready to use. If this was not you, call us now.",
+                    "Kadi yako {card} imefunguliwa na iko tayari kutumika. Ikiwa si wewe, tupigie sasa."}),
+            Map.entry("ACCOUNT_REACTIVATED", new String[]{
+                    "Your account {account} is active again. Ref {ref}.",
+                    "Akaunti yako {account} imefufuliwa. Kumb. {ref}."}),
+            Map.entry("MOBILE_CHANGED_OLD", new String[]{
+                    "The phone number on your bank account was changed to {mobile} at a Smart Teller. If this was not you, call us now.",
+                    "Nambari ya simu ya akaunti yako ya benki imebadilishwa kuwa {mobile} kwenye Smart Teller. Ikiwa si wewe, tupigie sasa."}),
+            Map.entry("MOBILE_CHANGED_NEW", new String[]{
+                    "This number now receives your bank codes and alerts. Ref {ref}.",
+                    "Nambari hii sasa itapokea misimbo na arifa za benki yako. Kumb. {ref}."}),
+            Map.entry("BIOMETRICS_ENROLLED", new String[]{
+                    "Your fingerprints were registered with the bank at a Smart Teller. If this was not you, call us now.",
+                    "Alama zako za vidole zimesajiliwa na benki kwenye Smart Teller. Ikiwa si wewe, tupigie sasa."}),
+            Map.entry("SIGNATURE_UPDATED", new String[]{
+                    "Your specimen signature was updated at a Smart Teller. If this was not you, call us now.",
+                    "Sahihi yako ya kielelezo imesasishwa kwenye Smart Teller. Ikiwa si wewe, tupigie sasa."}),
             Map.entry("STATEMENT_FEE", new String[]{
                     "{amount} charged for your {type} statement on {account}. Ref {ref}.",
                     "{amount} imetozwa kwa taarifa ya {type} kwenye {account}. Kumb. {ref}."}),

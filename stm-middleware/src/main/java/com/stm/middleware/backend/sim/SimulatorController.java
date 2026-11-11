@@ -21,6 +21,9 @@ public class SimulatorController {
     private final Rows rows;
     private final AuditService audit;
 
+    @org.springframework.beans.factory.annotation.Value("${stm.accounts.dormant-after-months:12}")
+    private int dormantMonths;
+
     public SimulatorController(SimControl control, Rows rows, AuditService audit) {
         this.control = control;
         this.rows = rows;
@@ -57,13 +60,24 @@ public class SimulatorController {
     public List<Map<String, Object>> customers(@RequestParam(required = false) String q) {
         Map<String, Object> p = new HashMap<>();
         p.put("q", q == null || q.isBlank() ? null : "%" + q.trim() + "%");
+        p.put("dormant", dormantMonths);
         return rows.list("""
-                SELECT c.id, c.id_number, c.full_name, c.mobile, c.kra_pin, c.branch, c.created_at,
+                SELECT c.id, c.id_number, c.full_name, c.mobile, c.kra_pin, c.branch, c.created_at, c.customer_since,
+                       c.mobile_changed_at,
+                       (SELECT count(*) FROM sim_biometrics b WHERE b.customer_id = c.id) AS fingers_enrolled,
+                       (SELECT g.source FROM sim_signatures g WHERE g.customer_id = c.id AND g.status = 'ACTIVE'
+                         ORDER BY g.captured_at DESC LIMIT 1) AS signature_source,
                        (SELECT json_agg(json_build_object('id', a.id, 'number', a.account_number, 'type', a.type,
-                               'available', a.available, 'ledger', a.ledger, 'currency', a.currency, 'status', a.status)
+                               'available', a.available, 'ledger', a.ledger, 'currency', a.currency,
+                               'status', CASE WHEN a.status = 'ACTIVE' AND a.last_activity_at < now() - make_interval(months => :dormant)
+                                              THEN 'DORMANT' ELSE a.status END,
+                               'statusReason', a.status_reason, 'lastActivityAt', a.last_activity_at)
                                ORDER BY a.created_at)::text FROM sim_accounts a WHERE a.customer_id = c.id) AS accounts_json,
                        (SELECT json_agg(json_build_object('id', k.id, 'maskedPan', k.masked_pan, 'product', k.product,
-                               'status', k.status, 'expiry', k.expiry, 'accountId', k.account_id) ORDER BY k.created_at)::text
+                               'status', CASE WHEN k.status IN ('ACTIVE', 'INACTIVE_PIN_REQUIRED', 'TEMP_BLOCKED')
+                                                   AND to_date(k.expiry, 'YYYY-MM') < date_trunc('month', now()) THEN 'EXPIRED' ELSE k.status END,
+                               'reason', CASE WHEN k.status = 'TEMP_BLOCKED' THEN k.temp_blocked_reason ELSE k.blocked_reason END,
+                               'expiry', k.expiry, 'accountId', k.account_id) ORDER BY k.created_at)::text
                           FROM sim_cards k WHERE k.customer_id = c.id) AS cards_json
                 FROM sim_customers c
                 WHERE CAST(:q AS VARCHAR) IS NULL OR c.full_name ILIKE :q OR c.id ILIKE :q OR c.id_number ILIKE :q

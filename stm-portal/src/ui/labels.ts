@@ -64,6 +64,23 @@ export const CARD_SERVICE_LABEL: Record<string, string> = {
   ACCOUNT_OPENING: "With new account",
 };
 
+/** Card and account changes customers make at a kiosk (service_events.kind). */
+export const SERVICE_KIND: Record<string, string> = {
+  PIN_CHANGED: "PIN changed",
+  PIN_RESET: "PIN reset",
+  CARD_TEMP_BLOCKED: "Card temporarily blocked",
+  CARD_UNBLOCKED: "Card unblocked",
+  CARD_BLOCKED: "Card blocked",
+  ACCOUNT_REACTIVATED: "Account reactivated",
+  BIOMETRICS_ENROLLED: "Fingerprints enrolled",
+  MOBILE_CHANGED: "Phone number changed",
+  SIGNATURE_REGISTERED: "Signature registered",
+  SIGNATURE_UPDATED: "Signature updated",
+};
+export const SOURCE_LABEL: Record<string, string> = {
+  BRANCH: "at a branch", STM_ONBOARDING: "at account opening on a kiosk", STM_ENROLMENT: "at a kiosk", STM_UPDATE: "at a kiosk",
+};
+
 export const STEP_LABEL: Record<string, string> = {
   PICK_BLANK: "Pick blank",
   PRINT_NAME: "Print name",

@@ -6,8 +6,12 @@ import java.util.Optional;
 /** Card management system (CMS) and HSM. PIN blocks are passed through, never decrypted by the Gateway. */
 public interface CardSystem {
 
+    /**
+     * status: INACTIVE_PIN_REQUIRED (new, no PIN yet), ACTIVE, TEMP_BLOCKED (frozen by the customer, can be lifted),
+     * BLOCKED (permanent: blockedReason LOST, STOLEN, DAMAGED or EXPIRED), PIN_LOCKED, EXPIRED, DESTROYED.
+     */
     record Card(String id, String customerId, String accountId, String maskedPan, String product, String status,
-                String expiry, int pinTriesLeft) {}
+                String expiry, int pinTriesLeft, String blockedReason, boolean pinSet, java.time.OffsetDateTime blockedAt) {}
 
     record PinCheck(boolean ok, int triesLeft) {}
 
@@ -33,6 +37,18 @@ public interface CardSystem {
     Card activate(String cardId);
 
     Card block(String cardId, String reason);
+
+    /** ACTIVE -> TEMP_BLOCKED. The customer can lift it with {@link #unblock}. */
+    Card temporaryBlock(String cardId, String reason);
+
+    /** TEMP_BLOCKED -> ACTIVE. Never lifts a permanent block. */
+    Card unblock(String cardId);
+
+    /** Changes the PIN of a card that already has one (verify the current PIN first). */
+    void changePin(String cardId, String newPinBlock, String format, String keySerialNumber);
+
+    /** Sets a new PIN after the customer was re-identified and clears a PIN lock (PIN_LOCKED -> ACTIVE). */
+    Card resetPin(String cardId, String newPinBlock, String format, String keySerialNumber);
 
     /** Retained or spoiled at the kiosk. */
     void destroy(String cardId, String reason);

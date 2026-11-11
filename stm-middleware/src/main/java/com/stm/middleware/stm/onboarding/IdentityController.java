@@ -223,8 +223,13 @@ public class IdentityController {
     public record Fingerprint(@Pattern(regexp = "RIGHT_THUMB|LEFT_THUMB|RIGHT_INDEX|LEFT_INDEX") String finger,
                               String template, @Min(0) @Max(100) Integer quality) {}
 
+    /**
+     * purpose MOBILE_CHANGE (card services only): the customer cannot receive the code because the phone is lost, so
+     * face AND thumbprint are required instead, and the token that comes back only allows a change of phone number.
+     */
     public record BiometricRequest(@Size(max = 40) String applicationId, @Size(max = 40) String verificationId,
                                    @Size(max = 30) String customerId, @Size(max = 40) String lookupRef,
+                                   @Pattern(regexp = "MOBILE_CHANGE") String purpose,
                                    @Valid Face face, @Valid Fingerprint fingerprint) {}
 
     @PostMapping("/biometrics/verify")
@@ -250,7 +255,7 @@ public class IdentityController {
         boolean pass = face.match() && finger.match();
         int attempts = app.biometricAttempts() + (pass ? 0 : 1);
         int left = Math.max(0, MAX_BIOMETRIC_ATTEMPTS - attempts);
-        String checkId = record(ctx, req, app.id(), null, app.verificationId(), face, finger, pass, left);
+        String checkId = record(ctx, req, app.id(), null, app.verificationId(), face, finger, pass, left, "IPRS");
         if (!pass) {
             applications.update(app.id(), Map.of("biometric_attempts", attempts));
             audit.session(ctx, "BIOMETRICS_FAILED", "applicationId", app.id(), "checkId", checkId, "face", face.result(),
@@ -261,7 +266,7 @@ public class IdentityController {
         applications.update(app.id(), Map.of("status", "BIOMETRICS_VERIFIED", "biometrics_passed", true));
         audit.session(ctx, "BIOMETRICS_VERIFIED", "applicationId", app.id(), "checkId", checkId,
                 "faceScore", face.score(), "fingerprintScore", finger.score());
-        return response(face, finger, left, null);
+        return response(face, finger, left, null, "IPRS");
     }
 
     private Map<String, Object> customerBiometrics(Ctx ctx, BiometricRequest req) {
@@ -272,8 +277,11 @@ public class IdentityController {
                 .query((rs, n) -> new Lookup(rs.getString(1), rs.getBoolean(2), rs.getBoolean(3))).optional()
                 .orElseThrow(() -> Errors.notFound("LOOKUP_NOT_FOUND", "Look up the customer first (C-1)", "Tafuta mteja kwanza"));
         if (!lk.customerId().equals(req.customerId())) throw Errors.validation("customerId", "customerId does not match the lookup");
-        if (!lk.otp()) throw Errors.wrongState("Verify the one-time code first (B-10).").detail("nextStep", "OTP");
+        // No code to the phone: only for a change of phone number, and then face and thumbprint are both required.
+        boolean phoneLost = !lk.otp() && "MOBILE_CHANGE".equals(req.purpose());
+        if (!lk.otp() && !phoneLost) throw Errors.wrongState("Verify the one-time code first (B-10).").detail("nextStep", "OTP");
         if (req.fingerprint() == null) throw Errors.validation("fingerprint", "fingerprint is required");
+        if (phoneLost && req.face() == null) throw Errors.validation("face", "face is required when the code cannot be sent");
         CoreBanking.Customer c = core.customer(req.customerId())
                 .orElseThrow(() -> Errors.notFound("CUSTOMER_NOT_FOUND", "Customer not found", "Mteja hakupatikana"));
         RegistryRecord r = identity.lookup("NATIONAL_ID", "KEN", c.idNumber())
@@ -284,19 +292,43 @@ public class IdentityController {
         IdentityServices.MatchResult face = req.face() == null ? null
                 : identity.matchFace(r, Captures.decode("face.image", req.face().image()),
                     req.face().livenessScore() == null ? 0 : req.face().livenessScore().doubleValue());
-        IdentityServices.MatchResult finger = identity.matchFingerprint(r, finger(req), null, quality(req));
+        // The bank's own template when the customer has enrolled; otherwise the national registry (IPRS).
+        byte[] template = templateBytes(req);
+        Optional<IdentityServices.MatchResult> bank = core.matchEnrolledFingerprint(c.id(), finger(req), template, quality(req));
+        IdentityServices.MatchResult finger = bank.orElseGet(() -> identity.matchFingerprint(r, finger(req), template, quality(req)));
+        String against = bank.isPresent() ? "BANK" : "IPRS";
         boolean pass = finger.match() && (face == null || face.match());
         int left = (int) Math.max(0, MAX_BIOMETRIC_ATTEMPTS - failures - (pass ? 0 : 1));
-        String checkId = record(ctx, req, null, c.id(), null, face, finger, pass, left);
+        String checkId = record(ctx, req, null, c.id(), null, face, finger, pass, left, against);
         if (!pass) {
             audit.session(ctx, "BIOMETRICS_FAILED", "customerId", c.id(), "checkId", checkId, "attemptsLeft", left);
             throw Errors.biometricNoMatch(left).detail("fingerprint", finger.result()).detail("offerTeller", left == 0);
         }
-        jdbc.sql("UPDATE customer_lookups SET finger_verified = true WHERE ref = :r").param("r", req.lookupRef()).update();
-        String token = customerTokens.issue(ctx.sessionId(), c.id(), "VERIFIED_IDENTITY");
+        jdbc.sql("UPDATE customer_lookups SET finger_verified = true, verified_by = :v WHERE ref = :r")
+                .param("v", phoneLost ? "FACE_FINGERPRINT" : "OTP_FINGERPRINT").param("r", req.lookupRef()).update();
+        String token = customerTokens.issue(ctx.sessionId(), c.id(), phoneLost ? "BIOMETRIC_ONLY" : "VERIFIED_IDENTITY");
         sessions.setCustomer(ctx.sessionId(), c.id(), c.fullName());
-        audit.session(ctx, "CUSTOMER_VERIFIED", "customerId", c.id(), "method", "OTP_FINGERPRINT", "checkId", checkId);
-        return response(face, finger, left, token);
+        audit.session(ctx, "CUSTOMER_VERIFIED", "customerId", c.id(), "method", phoneLost ? "FACE_FINGERPRINT" : "OTP_FINGERPRINT",
+                "checkId", checkId, "fingerprintAgainst", against);
+        Map<String, Object> out = response(face, finger, left, token, against);
+        CoreBanking.Biometrics enrolled = core.biometrics(c.id());
+        Map<String, Object> e = new LinkedHashMap<>();
+        e.put("enrolled", enrolled.enrolled());
+        e.put("fingers", enrolled.fingers());
+        e.put("offerEnrolment", !enrolled.enrolled() && !phoneLost);
+        out.put("bankEnrolment", e);
+        if (phoneLost) out.put("allows", List.of("MOBILE_CHANGE"));
+        return out;
+    }
+
+    private static byte[] templateBytes(BiometricRequest req) {
+        String t = req.fingerprint().template();
+        if (t == null || t.isBlank()) return new byte[0];
+        try {
+            return java.util.Base64.getDecoder().decode(t.trim());
+        } catch (IllegalArgumentException e) {
+            return t.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        }
     }
 
     private static String finger(BiometricRequest req) {
@@ -308,27 +340,30 @@ public class IdentityController {
     }
 
     private String record(Ctx ctx, BiometricRequest req, String applicationId, String customerId, String verificationId,
-                          IdentityServices.MatchResult face, IdentityServices.MatchResult finger, boolean pass, int left) {
+                          IdentityServices.MatchResult face, IdentityServices.MatchResult finger, boolean pass, int left,
+                          String against) {
         String id = Ids.next("bio");
         jdbc.sql("""
                 INSERT INTO biometric_checks (id, session_id, application_id, customer_id, verification_id, face_result,
-                    face_score, liveness_score, finger, finger_result, finger_score, finger_quality, overall, attempts_left)
-                VALUES (:id, :s, :a, :c, :v, :fr, :fs, :ls, :f, :gr, :gs, :q, :o, :l)""")
+                    face_score, liveness_score, finger, finger_result, finger_score, finger_quality, overall, attempts_left,
+                    finger_template, matched_against)
+                VALUES (:id, :s, :a, :c, :v, :fr, :fs, :ls, :f, :gr, :gs, :q, :o, :l, :tpl, :ag)""")
                 .param("id", id).param("s", ctx.sessionId()).param("a", applicationId).param("c", customerId)
                 .param("v", verificationId).param("fr", face == null ? null : face.result())
                 .param("fs", face == null ? null : BigDecimal.valueOf(face.score()))
                 .param("ls", req.face() == null ? null : req.face().livenessScore())
                 .param("f", finger(req)).param("gr", finger.result()).param("gs", BigDecimal.valueOf(finger.score()))
-                .param("q", quality(req)).param("o", pass ? "PASS" : "FAIL").param("l", left).update();
+                .param("q", quality(req)).param("o", pass ? "PASS" : "FAIL").param("l", left)
+                .param("tpl", pass ? templateBytes(req) : null).param("ag", against).update();
         if (req.face() != null) captures.store("BIOMETRIC", id, "FACE", Captures.decode("face.image", req.face().image()));
         return id;
     }
 
     private static Map<String, Object> response(IdentityServices.MatchResult face, IdentityServices.MatchResult finger,
-                                                int left, String customerToken) {
+                                                int left, String customerToken, String against) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (face != null) out.put("face", Map.of("result", face.result(), "score", face.score(), "against", "IPRS_PHOTO"));
-        out.put("fingerprint", Map.of("result", finger.result(), "score", finger.score(), "against", "IPRS"));
+        out.put("fingerprint", Map.of("result", finger.result(), "score", finger.score(), "against", against));
         out.put("overall", "PASS");
         out.put("attemptsLeft", left);
         if (customerToken != null) out.put("customerToken", customerToken);

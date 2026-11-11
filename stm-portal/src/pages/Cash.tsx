@@ -1,7 +1,7 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useState } from "react";
 import { usePortal } from "../context";
 import type { TxRow } from "../api/portal";
-import { Badge, Card, Empty, ErrorNote, fmt, Kpi, Mono, Segmented, Spinner, useLoad } from "../ui/kit";
+import { Badge, Card, Empty, ErrorNote, fmt, Kpi, Mono, Pager, Segmented, Spinner, useDebounced, useLoad, usePaging } from "../ui/kit";
 import { IconCash, IconChevronRight, IconSearch } from "../ui/Icons";
 
 type Kind = "" | "DEPOSIT" | "WITHDRAWAL" | "FX";
@@ -14,25 +14,21 @@ export function Cash() {
   const [kind, setKind] = useState<Kind>("");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<string | null>(null);
-  const tx = useLoad(() => portal.transactions({ kind: kind || undefined }), [kind], 15_000);
-
-  const rows = useMemo(() => {
-    const n = q.trim().toLowerCase();
-    return (tx.data ?? []).filter((t) => !n || [t.party, t.transactionRef, t.coreRef, t.terminalCode, t.id].some((v) => v?.toLowerCase().includes(n)));
-  }, [tx.data, q]);
-
-  const today = new Date().toDateString();
-  const sum = (k: string, field: "localAmount" = "localAmount") => (tx.data ?? [])
-    .filter((t) => t.kind === k && new Date(t.createdAt).toDateString() === today && !["CANCELLED", "RETURNED", "REVERSED"].includes(t.status))
-    .reduce((n, t) => n + (t[field] ?? 0), 0);
-  const exceptions = (tx.data ?? []).filter((t) => ["REVERSED", "PENDING_RECONCILIATION", "UNKNOWN"].includes(t.status) || (t.suspectedCounterfeit ?? 0) > 0).length;
+  const dq = useDebounced(q.trim());
+  const paging = usePaging("cash", [kind, dq]);
+  const tx = useLoad(() => portal.transactionsPage({ kind: kind || undefined, q: dq || undefined, page: paging.page, size: paging.size }),
+    [kind, dq, paging.page, paging.size], 15_000);
+  // The tiles count every transaction today, not only the page on screen.
+  const sum = useLoad(() => portal.transactionsSummary(), [], 15_000);
+  const rows = tx.data?.items ?? [];
+  const exceptions = sum.data?.exceptions ?? 0;
 
   return (
     <div className="stack">
       <div className="kpis kpis--4">
-        <Kpi label="Deposited today" value={fmt.moneyShort(sum("DEPOSIT"))} icon={<IconCash />} tone="good" />
-        <Kpi label="Withdrawn today" value={fmt.moneyShort(sum("WITHDRAWAL"))} icon={<IconCash />} />
-        <Kpi label="Forex today (KES value)" value={fmt.moneyShort(sum("FX"))} icon={<IconCash />} />
+        <Kpi label="Deposited today" value={fmt.moneyShort(sum.data?.depositedToday ?? 0)} icon={<IconCash />} tone="good" />
+        <Kpi label="Withdrawn today" value={fmt.moneyShort(sum.data?.withdrawnToday ?? 0)} icon={<IconCash />} />
+        <Kpi label="Forex today (KES value)" value={fmt.moneyShort(sum.data?.fxToday ?? 0)} icon={<IconCash />} />
         <Kpi label="Exceptions" value={exceptions} hint="Reversed, unknown outcome or suspect notes" icon={<IconCash />} tone={exceptions ? "warn" : "neutral"} />
       </div>
       <Card pad={false} title="Cash transactions" subtitle="Open a row to see the double-entry postings in core banking"
@@ -46,7 +42,7 @@ export function Cash() {
             }>
         {tx.error && !tx.data ? <div className="card__body"><ErrorNote error={tx.error} onRetry={tx.reload} /></div>
           : !tx.data ? <div className="card__body"><Spinner /></div>
-          : rows.length === 0 ? <Empty icon={<IconCash />} title="No cash transactions yet" />
+          : rows.length === 0 ? <Empty icon={<IconCash />} title={dq || kind ? "No transactions match" : "No cash transactions yet"} />
           : (
             <div className="table-wrap">
               <table className="table">
@@ -74,6 +70,7 @@ export function Cash() {
               </table>
             </div>
           )}
+        <Pager data={tx.data} onPage={(p) => { setOpen(null); paging.setPage(p); }} onSize={paging.setSize} />
       </Card>
     </div>
   );

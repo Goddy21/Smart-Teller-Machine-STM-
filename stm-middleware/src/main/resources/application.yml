@@ -19,6 +19,14 @@ spring:
       max-request-size: 8MB
 
 stm:
+  mail:                             # SMTP for portal sign-in codes. No SMTP_HOST = simulated (email_outbox + log only).
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:587}
+    security: ${SMTP_SECURITY:STARTTLS}   # STARTTLS (port 587), SSL (port 465) or NONE (internal relay, port 25)
+    username: ${SMTP_USERNAME:}           # blank = the server does not ask for a login
+    password: ${SMTP_PASSWORD:}
+    from: ${MAIL_FROM:Smart Teller Portal <no-reply@stm.local>}
+    timeout-seconds: 10
   provisioning-secret: ${PROVISIONING_SECRET:dev-provisioning-secret}
   portal-api-key: ${PORTAL_API_KEY:dev-portal-key}
   require-client-cert: false
@@ -35,12 +43,19 @@ stm:
     lock-minutes: 15
     allow-shared-key: true          # DEV: scripts may still use X-Portal-Key (demo-journey.ps1). False in prod.
     bootstrap-admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}   # blank = random, printed once in the log
+    email-otp: ${PORTAL_EMAIL_OTP:true}   # sign-in code by email after the password (accounts with an email address)
+    otp-minutes: 5
+    otp-max-attempts: 5
   session:
     max-minutes: 30                 # absolute session lifetime (D-2 expiresAt)
     idle-seconds: 600               # server-side safety net: sessions with no call for this long expire
     inactivity-timeout-sec: 60      # told to the kiosk in D-2: its own "are you still there?" countdown
   call-control:
     url: ${CALL_CONTROL_URL:http://localhost:8090}   # stm-video call-control, for "Talk to a teller" (D-8)
+  accounts:
+    dormant-after-months: 12        # an account with no customer activity for this long is DORMANT until reactivated
+  services:
+    mobile-change-hold-hours: 24    # after a phone-number change: no PIN reset, card order or second change for this long
   kyc:
     sim-swap-block-hours: 72        # no OTP to a number whose SIM was swapped within this many hours (403 SIM_SWAP_RISK)
     review-years: { low: 3, medium: 2, high: 1 }   # KYC refresh cycle by risk rating

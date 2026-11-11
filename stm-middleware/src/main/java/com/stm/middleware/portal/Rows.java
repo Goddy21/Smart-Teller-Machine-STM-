@@ -30,6 +30,27 @@ public class Rows {
         return list(sql, Map.of());
     }
 
+    /**
+     * One page of a list. {@code countSql} must return a single count for the same filters; {@code selectSql} must
+     * already end with its ORDER BY (a unique tie-breaker keeps pages stable). Pages are numbered from 1.
+     */
+    public Page page(String countSql, String selectSql, Map<String, ?> params, int page, int size) {
+        int sz = Math.max(1, Math.min(size, 200));
+        long total = jdbc.sql(countSql).params(params).query(Long.class).single();
+        int pages = (int) Math.max(1, (total + sz - 1) / sz);
+        int pg = Math.max(1, Math.min(page, pages));
+        Map<String, Object> p = new HashMap<>(params);
+        p.put("pageLimit", sz);
+        p.put("pageOffset", (long) (pg - 1) * sz);
+        List<Map<String, Object>> items = list(selectSql + " LIMIT :pageLimit OFFSET :pageOffset", p);
+        return new Page(items, total, pg, sz, pages, null);
+    }
+
+    /** A page of rows. counts: optional totals per filter tab (for example on the sessions list). */
+    public record Page(List<Map<String, Object>> items, long total, int page, int size, int pages, Map<String, Long> counts) {
+        public Page withCounts(Map<String, Long> c) { return new Page(items, total, page, size, pages, c); }
+    }
+
     public Optional<Map<String, Object>> one(String sql, Map<String, ?> params) {
         List<Map<String, Object>> l = list(sql, params);
         return l.isEmpty() ? Optional.empty() : Optional.of(l.get(0));

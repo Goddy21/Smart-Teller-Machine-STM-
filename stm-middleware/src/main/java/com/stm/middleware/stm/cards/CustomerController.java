@@ -91,31 +91,34 @@ public class CustomerController {
         return b.append(p[p.length - 1]).toString();
     }
 
+    /** Every card of the customer (a customer may hold several), each with its state and what can be done with it. */
     @GetMapping("/{customerId}/cards")
     public Map<String, Object> cards(Ctx ctx, @PathVariable String customerId) {
         ctx.requireCustomer(customerId);
+        Map<String, CoreBanking.Account> accounts = new HashMap<>();
+        for (CoreBanking.Account a : core.accounts(customerId)) accounts.put(a.id(), a);
         List<Map<String, Object>> list = new ArrayList<>();
         for (CardSystem.Card card : cards.cards(customerId)) {
             if ("DESTROYED".equals(card.status())) continue;
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("cardId", card.id());
-            m.put("maskedPan", card.maskedPan());
-            m.put("product", card.product());
-            m.put("status", card.status());
-            m.put("expiry", card.expiry());
-            m.put("linkedAccountId", card.accountId());
-            list.add(m);
+            list.add(CardView.of(card, accounts.get(card.accountId()), ctx.sw()));
         }
         return Map.of("cards", list);
     }
 
+    /**
+     * Every account with its status: ACTIVE, DORMANT (reactivate first, M-2), FROZEN or CLOSED (teller).
+     * eligibleFor=CARD adds whether a new card can be linked to it.
+     */
     @GetMapping("/{customerId}/accounts")
     public Map<String, Object> accounts(Ctx ctx, @PathVariable String customerId,
                                         @RequestParam(required = false) String eligibleFor) {
         ctx.requireCustomer(customerId);
+        Map<String, Integer> cardCount = new HashMap<>();
         Set<String> withCard = new HashSet<>();
         for (CardSystem.Card card : cards.cards(customerId)) {
-            if (Set.of("ACTIVE", "INACTIVE_PIN_REQUIRED").contains(card.status())) withCard.add(card.accountId());
+            if ("DESTROYED".equals(card.status())) continue;
+            cardCount.merge(card.accountId(), 1, Integer::sum);
+            if (Set.of("ACTIVE", "INACTIVE_PIN_REQUIRED", "TEMP_BLOCKED").contains(card.status())) withCard.add(card.accountId());
         }
         List<Map<String, Object>> list = new ArrayList<>();
         for (CoreBanking.Account a : core.accounts(customerId)) {
@@ -124,12 +127,25 @@ public class CustomerController {
             m.put("type", a.type());
             m.put("masked", a.masked());
             m.put("available", Money.of(a.available(), a.currency()));
+            m.put("status", a.status());
+            m.put("canTransact", a.active());
+            m.put("lastActivityAt", a.lastActivityAt());
+            if (a.dormant()) {
+                m.put("statusText", ctx.sw() ? "Imelala: ifufue ili kuitumia" : "Dormant: reactivate it to use it");
+                m.put("nextStep", "ACCOUNT_REACTIVATION");
+            } else if (!a.active()) {
+                m.put("statusText", ctx.sw() ? "Haiwezi kutumika hapa: zungumza na mhudumu" : "Cannot be used here: talk to a teller");
+                m.put("nextStep", "TELLER");
+            }
             boolean has = withCard.contains(a.id());
             m.put("hasCard", has);
+            m.put("cards", cardCount.getOrDefault(a.id(), 0));
             if ("CARD".equals(eligibleFor)) {
-                boolean eligible = a.cardEligible() && !has && "ACTIVE".equals(a.status());
+                boolean eligible = a.cardEligible() && !has && a.active();
                 m.put("eligible", eligible);
                 if (!a.cardEligible()) m.put("reason", "Cards aren't available for this account type");
+                else if (a.dormant()) m.put("reason", "This account is dormant. Reactivate it first");
+                else if (!a.active()) m.put("reason", "This account cannot be used here");
                 else if (has) m.put("reason", "This account already has a card");
             }
             list.add(m);

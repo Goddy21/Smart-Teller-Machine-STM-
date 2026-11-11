@@ -41,9 +41,15 @@ public class CardController {
     private final JdbcClient jdbc;
     private final Json json;
     private final StmAudit audit;
+    private final com.stm.middleware.stm.services.Safeguards safeguards;
+    private final com.stm.middleware.stm.services.ServiceEvents events;
 
     public CardController(Owned owned, CoreBanking core, CardSystem cms, DeviceHealthService health, SessionStore sessions,
-                          Idempotency idempotency, Refs refs, SmsService sms, JdbcClient jdbc, Json json, StmAudit audit) {
+                          Idempotency idempotency, Refs refs, SmsService sms, JdbcClient jdbc, Json json, StmAudit audit,
+                          com.stm.middleware.stm.services.Safeguards safeguards,
+                          com.stm.middleware.stm.services.ServiceEvents events) {
+        this.safeguards = safeguards;
+        this.events = events;
         this.owned = owned;
         this.core = core;
         this.cms = cms;
@@ -115,11 +121,15 @@ public class CardController {
 
     private Map<String, Object> doOrder(Ctx ctx, OrderRequest req) {
         String customerId = ctx.customerId();
+        // A just-changed phone number must not be able to order or replace a card straight away.
+        if (!"ONBOARDING".equals(ctx.customerAuth())) safeguards.requireSettledMobile(customerId);
         if ("NEW_CARD_SETUP".equals(req.service())) return newCardSetup(ctx, req);
         health.requireService(ctx.terminalId(), "cardServices");
         if (req.accountId() == null) throw Errors.validation("accountId", "accountId is required");
         if (req.cardProduct() == null) throw Errors.validation("cardProduct", "cardProduct is required");
         CoreBanking.Account account = owned.account(ctx, req.accountId());
+        if (account.dormant()) throw Errors.accountDormant(account.id());
+        if (!account.active()) throw Errors.accountRestricted(account.status());
         CoreBanking.Customer customer = core.customer(customerId).orElseThrow();
 
         // Account opening: the first card for the new account is free when the product says so.
@@ -413,12 +423,15 @@ public class CardController {
         if (mobile != null) {
             sms.send(ctx.sessionId(), "CARD_BLOCKED", mobile, ctx.lang(), Map.of("card", card.maskedPan(), "reason", req.reason()));
         }
-        audit.session(ctx, "CARD_BLOCKED", "cardId", cardId, "reason", req.reason());
+        String ref = refs.next("SVC");
+        events.record(ctx, card.customerId(), "CARD_BLOCKED", card.maskedPan(), ref, "cardId", cardId, "reason", req.reason());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("cardId", cardId);
+        out.put("maskedPan", card.maskedPan());
         out.put("status", card.status());
         out.put("blockedAt", OffsetDateTime.now());
         out.put("reason", req.reason());
+        out.put("reference", ref);
         return out;
     }
 }

@@ -54,6 +54,8 @@ Money is `{"amount": "12000.00", "currency": "KES"}` (decimal strings). Errors a
 | C4 Account & fee | C-3 `GET /customers/{id}/accounts?eligibleFor=CARD`, C-4 `POST /fees/quote` |
 | C5 Printing | C-5 `POST /cards/orders`, C-6 `GET /cards/orders/{id}` (steps), C-7 `POST /cards/orders/{id}/dispense`; C-10 block a lost card |
 | C6 PIN activation | C-8, C-9 |
+| Manage my cards (new) | C-2 every card with `statusText` and `actions` (several cards per customer); P-1 status, P-2 PIN change, P-3 PIN reset, P-4 temporary block, P-5 unblock, C-10 lost / stolen / damaged then a replacement |
+| My details (new) | M-1 profile (`suggestions`), M-2 reactivate a dormant account, M-3 enrol fingerprints, M-4 / M-5 change the phone number (code to the new number; phone lost: face + thumbprint), M-6 / M-7 specimen signature (B8 pad) |
 | D1 Card + PIN | S-1 `POST /auth/card`, S-2 `POST /auth/card/pin-verify` (3 tries, then `RETAIN`); S-3 balance |
 | D2–D3 Statements | S-4 `GET /statements/options`, S-5 `POST /statements` (fee), S-6 `GET /statements/{id}/document` (PDF) |
 | E1–E7 Deposit | K-1 `POST /accounts/validate` (account or Paybill 522522/888880), K-2 open, K-3 count, K-4 commit, K-5 cancel |
@@ -74,6 +76,7 @@ forex 50 notes and USD/EUR/GBP 1,000 a day; cash-out of forex rounded down to KE
 | 30333444 | Otieno Peter Ouma | KRA PIN inactive (`KRA_PIN_INVALID`) |
 | 30444555 | Faith Atieno Odhiambo | document tamper check fails |
 | 32145678 | Achieng Wanjiru Otieno, CIF00482913 | existing customer: card `tok_4512xxxx4521` PIN **2580**; savings 0123454521, current 0123457780 (no card yet), junior saver |
+| 25567890 | Mary Njoki Kariuki, CIF00204417 (customer since 2014) | pre-STM customer: no fingerprints or signature on file; accounts 0124417001 / 002 active, 0124417003 **dormant**, 0124417004 **frozen**; five cards, PIN **2468**: `tok_4512xxxx8101` and `…8102` active (two cards on one account), `…8103` temporarily blocked, `…8104` blocked (damaged), `…8105` PIN locked |
 | 27654321 | Brian Kiprotich Mutai, CIF00391144 (account 0119876543) | blocked card 6611 and expired card 7002 (PIN 1357); SIM swapped 20 hours ago (no OTP); KYC review overdue, no KRA PIN on file |
 | P12345678 (GBR) | John Robert Smith | visitor passport for forex |
 
@@ -127,6 +130,16 @@ call-control is down.
 - Audit journal is hash-chained with masked identifiers; the kiosk journal (A-1) is HMAC-signed per batch.
 - No one-time code goes to a number whose SIM was swapped in the last 72 h (`stm.kyc.sim-swap-block-hours`); the
   `Telco` port checks it (simulated by `sim_sim_swaps`).
+- Customer tokens carry how they were earned. Card + PIN may change the PIN, freeze or block a card and move cash;
+  anything that opens a door (PIN reset, unblock, reactivation, signature, fingerprints, card order after a number
+  change) needs the code to the phone on record plus a thumbprint (403 `STEP_UP_REQUIRED`). Face + thumbprint without
+  the code (phone lost) only allows the phone-number change.
+- After a phone-number change the new number is not trusted for 24 h (`stm.services.mobile-change-hold-hours`):
+  PIN reset, unblock, reactivation, signature and card orders answer 403 `MOBILE_RECENTLY_CHANGED`; both numbers get an SMS.
+- Accounts are DORMANT after 12 months without customer activity (`stm.accounts.dormant-after-months`): debits are
+  refused, deposits accepted, M-2 reactivates after re-identification and a current KYC. FROZEN and CLOSED go to a teller.
+- Account opening registers the specimen signature (B-11, image checked for size and ink) and the thumbprint from B-5
+  in core banking; pre-STM customers add theirs with M-3 and M-7, after which B-5 matches against the bank, not only IPRS.
 - Sessions expire after 10 min idle; D-4 lists open items (escrowed notes, a card in the printer) the kiosk must finish.
 
 ## Not done yet

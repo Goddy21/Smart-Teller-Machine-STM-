@@ -41,9 +41,25 @@ export function clearSession() {
   try { sessionStorage.removeItem(KEY); } catch { /* ignore */ }
 }
 
+/** Sign-in answer: a session, or (accounts with an email address) a request for the emailed code. */
+export interface LoginResult {
+  token: string | null;
+  expiresAt: string | null;
+  user: User | null;
+  otpRequired: boolean;
+  challenge: string | null;
+  maskedEmail: string | null;
+  expiresInSec: number | null;
+  resendAfterSec: number | null;
+}
+
 export const authApi = {
   login: (username: string, password: string) =>
-    request<{ token: string; expiresAt: string; user: User }>("/api/v1/auth/login", { method: "POST", body: { username, password } }),
+    request<LoginResult>("/api/v1/auth/login", { method: "POST", body: { username, password } }),
+  verifyOtp: (challenge: string, code: string) =>
+    request<LoginResult>("/api/v1/auth/login/otp", { method: "POST", body: { challenge, code } }),
+  resendOtp: (challenge: string) =>
+    request<LoginResult>("/api/v1/auth/login/resend", { method: "POST", body: { challenge } }),
   me: (token: string) => request<User>("/api/v1/auth/me", { headers: bearer(token) }),
   logout: (token: string) => request<void>("/api/v1/auth/logout", { method: "POST", headers: bearer(token) }),
   changePassword: (token: string, currentPassword: string, newPassword: string) =>

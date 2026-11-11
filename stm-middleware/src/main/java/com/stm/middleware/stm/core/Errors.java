@@ -111,9 +111,52 @@ public final class Errors {
                 "Umekosea PIN mara nyingi. Kadi yako imehifadhiwa kwa usalama wako. Tafadhali tembelea tawi.", false)
                 .detail("cardAction", "RETAIN");
     }
+    /** Locked by wrong PINs (here or at another machine): the customer resets the PIN in Card Services (P-3). */
+    public static StmException pinLocked() {
+        return of(HttpStatus.FORBIDDEN, "PIN_LOCKED",
+                "Too many wrong PINs, so this card is locked. Reset the PIN in Card Services to use it again.",
+                "Umekosea PIN mara nyingi, kwa hivyo kadi hii imefungwa. Weka PIN mpya kwenye Huduma za Kadi ili uitumie tena.", false)
+                .detail("nextStep", "PIN_RESET");
+    }
     public static StmException cardBlocked(String cardAction) {
         return of(HttpStatus.FORBIDDEN, "CARD_BLOCKED", "This card is blocked.", "Kadi hii imezuiwa.", false)
                 .detail("cardAction", cardAction);
+    }
+    public static StmException cardTempBlocked() {
+        return of(HttpStatus.FORBIDDEN, "CARD_TEMP_BLOCKED",
+                "This card is temporarily blocked. Unblock it in Card Services to use it again.",
+                "Kadi hii imezuiwa kwa muda. Ifungue kwenye Huduma za Kadi ili uitumie tena.", false).detail("cardAction", "RETURN");
+    }
+    public static StmException cardBlockedPermanent(String reason) {
+        return of(HttpStatus.CONFLICT, "CARD_BLOCKED_PERMANENT",
+                "This card was blocked for good and cannot be unblocked. Order a replacement card.",
+                "Kadi hii imezuiwa kabisa na haiwezi kufunguliwa. Agiza kadi mpya.", false)
+                .detail("reason", reason).detail("nextStep", "CARD_REPLACEMENT");
+    }
+    /** The customer token came from card + PIN, but this action needs the code and thumbprint check (C-1, B-9, B-5). */
+    public static StmException stepUpRequired() {
+        return of(HttpStatus.FORBIDDEN, "STEP_UP_REQUIRED",
+                "For your safety, confirm it is you with a code to your phone and your thumbprint first.",
+                "Kwa usalama wako, thibitisha ni wewe kwa msimbo kwenye simu yako na alama ya kidole kwanza.", false)
+                .detail("nextStep", "CUSTOMER_LOOKUP").detail("required", java.util.List.of("OTP", "FINGERPRINT"));
+    }
+    public static StmException accountDormant(String accountId) {
+        return of(HttpStatus.FORBIDDEN, "ACCOUNT_DORMANT",
+                "This account is dormant because it has not been used for a long time. Reactivate it first.",
+                "Akaunti hii imelala kwa sababu haijatumika kwa muda mrefu. Ifufue kwanza.", false)
+                .detail("accountId", accountId).detail("nextStep", "ACCOUNT_REACTIVATION");
+    }
+    public static StmException accountRestricted(String status) {
+        return of(HttpStatus.FORBIDDEN, "ACCOUNT_RESTRICTED", "This account cannot be used here. Please talk to a teller.",
+                "Akaunti hii haiwezi kutumika hapa. Tafadhali zungumza na mhudumu.", false)
+                .detail("accountStatus", status).detail("offerTeller", true);
+    }
+    /** After a change of phone number, sensitive services wait (stm.services.mobile-change-hold-hours). */
+    public static StmException mobileRecentlyChanged(long hoursLeft) {
+        return of(HttpStatus.FORBIDDEN, "MOBILE_RECENTLY_CHANGED",
+                "Your phone number was changed recently. For your safety this service is on hold for a short time. A teller can help you now.",
+                "Nambari yako ya simu ilibadilishwa hivi karibuni. Kwa usalama wako huduma hii imesitishwa kwa muda mfupi. Mhudumu anaweza kukusaidia sasa.", false)
+                .detail("hoursLeft", hoursLeft).detail("offerTeller", true);
     }
     public static StmException cardExpired() {
         return of(HttpStatus.FORBIDDEN, "CARD_EXPIRED", "This card has expired. Use Card Services to replace it.",
