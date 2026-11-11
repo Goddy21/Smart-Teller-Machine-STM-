@@ -2,6 +2,7 @@ import { createContext, useContext, useSyncExternalStore } from "react";
 import type { User } from "./auth";
 import type { PortalApi } from "./api/portal";
 import type { TellerConsole } from "./video/TellerConsole";
+import type { ConfirmOptions } from "./ui/kit";
 
 export type Page = "overview" | "sessions" | "applications" | "video" | "fleet" | "cash" | "cards" | "reconciliation" | "audit"
   | "reference" | "simulator" | "users";
@@ -15,6 +16,8 @@ export interface PortalCtx {
   /** Opens the session drawer from anywhere (e.g. the video page or the overview). */
   openSession: (id: string) => void;
   toast: (text: string, tone?: "ok" | "error" | "info") => void;
+  /** Asks "are you sure?" in a dialog. Resolves true when the person goes ahead. Use instead of window.confirm. */
+  confirm: (options: ConfirmOptions) => Promise<boolean>;
   signOut: () => void;
   changePassword: () => void;
 }

@@ -171,7 +171,12 @@ export interface TerminalView {
 export interface TerminalRow {
   terminalCode: string; branchCode: string; branchName: string | null; status: string; serviceMode: "IN_SERVICE" | "LOCKED";
   softwareVersion: string | null; createdAt: string; sessionsToday: number; sessionsTotal: number; lastSignIn: string | null;
+  name: string | null; location: string | null; notes: string | null; tokenRotatedAt: string | null; retiredAt: string | null;
 }
+/** What an administrator fills in for a kiosk. branchName is only needed for a branch that does not exist yet. */
+export interface TerminalDetails { branchCode: string; branchName?: string; name?: string; location?: string; notes?: string }
+/** The terminal token is in here once: when the kiosk is created or its token is replaced. */
+export interface TerminalCreated { terminalCode: string; branchCode: string; token: string }
 
 export type TerminalCommand = "REBOOT" | "LOCK" | "UNLOCK" | "REFRESH_CONFIG";
 
@@ -367,6 +372,17 @@ export class PortalApi {
 
   terminals() { return this.get<TerminalView[]>("/terminals"); }
   registry() { return this.get<TerminalRow[]>("/terminals/registry"); }
+  createTerminal(terminalCode: string, d: TerminalDetails) { return this.post<TerminalCreated>("/terminals", { terminalCode, ...d }); }
+  updateTerminal(terminalCode: string, d: TerminalDetails) {
+    return this.put<{ terminalCode: string; branchCode: string; branchChanged: boolean }>(`/terminals/${encodeURIComponent(terminalCode)}`, d);
+  }
+  rotateTerminalToken(terminalCode: string) { return this.post<TerminalCreated>(`/terminals/${encodeURIComponent(terminalCode)}/rotate-token`); }
+  setTerminalStatus(terminalCode: string, status: "ACTIVE" | "DISABLED") {
+    return this.put<{ terminalCode: string; status: string }>(`/terminals/${encodeURIComponent(terminalCode)}/status`, { status });
+  }
+  removeTerminal(terminalCode: string) {
+    return this.del<{ terminalCode: string; outcome: "DELETED" | "RETIRED" }>(`/terminals/${encodeURIComponent(terminalCode)}`);
+  }
   command(terminalCode: string, command: TerminalCommand) {
     return this.post<{ applied: boolean; pushed: boolean }>(`/terminals/${encodeURIComponent(terminalCode)}/commands`, { command });
   }

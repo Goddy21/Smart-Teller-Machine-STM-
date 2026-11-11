@@ -77,6 +77,8 @@ export const can = {
   controlKiosks: (r: Role) => r === "SUPERVISOR" || r === "ADMIN",
   readAudit: (r: Role) => r === "SUPERVISOR" || r === "AUDITOR" || r === "ADMIN",
   manageUsers: (r: Role) => r === "ADMIN",
+  /** Create, edit, re-key, disable and remove kiosks. */
+  manageKiosks: (r: Role) => r === "ADMIN",
   /** Cash reconciliation and the device electronic journal, like the audit trail. */
   reconcile: (r: Role) => r === "SUPERVISOR" || r === "AUDITOR" || r === "ADMIN",
   /** FX rates (until the treasury feed is connected) and the simulator switches. */

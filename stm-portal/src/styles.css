@@ -793,3 +793,34 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; font: inher
 .pager--compact .pager__page { display: none; }
 .pager .btn:disabled { opacity: .45; }
 .select--sm { height: 32px; padding: 0 28px 0 10px; font-size: 13px; }
+
+/* ---- dialogs (Modal, ConfirmDialog): the portal never uses the browser's own alert / confirm boxes */
+.modal-wrap { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: rgba(5, 7, 30, .55);
+  backdrop-filter: blur(3px); animation: fade .15s; overflow-y: auto; }
+.modal { width: 100%; max-height: calc(100vh - 40px); display: flex; flex-direction: column; background: var(--surface); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg); border: 1px solid var(--line); animation: pop .18s ease-out; }
+.modal--sm { max-width: 440px; } .modal--md { max-width: 560px; } .modal--lg { max-width: 720px; }
+@keyframes pop { from { transform: translateY(10px) scale(.98); opacity: 0; } }
+.modal__head { display: flex; align-items: center; gap: 14px; padding: 22px 22px 6px 24px; }
+.modal__title { flex: 1; font: 800 19px/1.25 var(--f-disp); color: var(--ink); letter-spacing: -.01em; }
+.modal__icon { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; font-size: 20px; }
+.modal__icon--info { background: var(--info-bg); color: var(--info); }
+.modal__icon--good { background: var(--good-bg); color: var(--good); }
+.modal__icon--warn { background: var(--warn-bg); color: var(--warn); }
+.modal__icon--danger { background: var(--bad-bg); color: var(--bad); }
+.modal__body { padding: 10px 24px 6px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.modal__text { color: var(--ink-2); font-size: 15px; line-height: 1.55; }
+.modal__text p + p { margin-top: 10px; }
+.modal__foot { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 18px 24px 22px; }
+.modal .form { gap: 14px; }
+.form__row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 560px) { .form__row { grid-template-columns: 1fr; } .modal__foot .btn { flex: 1; } }
+.token-box { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-radius: 16px; background: var(--navy-950); }
+.token-box .mono { flex: 1; min-width: 0; background: transparent; color: #fff; font-size: 14px; word-break: break-all; white-space: normal; }
+.kiosk__head .menu__btn { margin-left: 4px; }
+.kiosk__place { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.kiosk.is-disabled { opacity: .8; }
+.kiosk__notes { color: var(--muted); font-size: 13px; }
+.fleet-summary .btn { margin-left: auto; }
+.fleet-summary .live + .btn, .fleet-summary .btn + .live { margin-left: 0; }
+.fleet-summary .btn span { color: inherit; font-weight: inherit; }

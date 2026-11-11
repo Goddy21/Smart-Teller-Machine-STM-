@@ -2271,6 +2271,11 @@ Also `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/passw
 | `GET /captures/{id}` | all | the image (registry photo, face, signature); every view is audited |
 | `GET /transactions?kind=DEPOSIT\|WITHDRAWAL\|FX&status=` | all | `id, kind, terminalCode, sessionId, status, currency, amount, localAmount, party, transactionRef, coreRef, reversalRef, …` |
 | `GET /postings?refs=FT…,FT…` | all | core-banking postings: `coreRef, accountId (or GL), direction DR/CR, amount, currency, narrative, balanceAfter` |
+| `POST /terminals` `{terminalCode, branchCode, branchName?, name?, location?, notes?}` | ADMIN | adds a kiosk; the answer has its terminal `token` once. A new branch is created when `branchName` is given |
+| `PUT /terminals/{code}` | ADMIN | branch, name, location, notes (the kiosk ID cannot change) |
+| `POST /terminals/{code}/rotate-token` | ADMIN | replaces the terminal token (answer has the new `token` once); the old one stops working and the kiosk is signed out |
+| `PUT /terminals/{code}/status` `{status: ACTIVE \| DISABLED}` | ADMIN | a disabled kiosk cannot sign in; ACTIVE also restores a removed kiosk |
+| `DELETE /terminals/{code}` | ADMIN | deletes a kiosk that never served a customer; one with history is retired (`outcome: DELETED \| RETIRED`) |
 | `GET /card-orders?status=` | all | card orders with steps, fee and customer |
 | `GET /service-events?kind=&q=&page=&size=` | all | card and account changes made at the kiosks: PIN_CHANGED, PIN_RESET, CARD_TEMP_BLOCKED, CARD_UNBLOCKED, CARD_BLOCKED, ACCOUNT_REACTIVATED, BIOMETRICS_ENROLLED, MOBILE_CHANGED, SIGNATURE_REGISTERED, SIGNATURE_UPDATED |
 | `GET /customers/{customerId}/signature` | all | the specimen signature image held by core banking (each view is audited); `GET /sessions/{id}` adds `serviceEvents` and `customerRecord` |

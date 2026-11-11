@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import { usePortal } from "../context";
 import { ROLE_LABEL, type Role } from "../auth";
 import type { EmailRow, PortalUserRow, UserActivity, UserCreated } from "../api/portal";
-import { Badge, Button, Card, Drawer, Empty, ErrorNote, fmt, Mono, Pager, Spinner, useLoad, usePaging } from "../ui/kit";
+import { Badge, Button, Card, Drawer, Empty, ErrorNote, fmt, Mono, Pager, RowMenu, Spinner, useLoad, usePaging } from "../ui/kit";
 import { IconCheck, IconEdit, IconHistory, IconLock, IconMail, IconPause, IconRefresh, IconSignOut, IconTrash, IconUsers } from "../ui/Icons";
 
 const ROLES: Role[] = ["TELLER", "SUPERVISOR", "AUDITOR", "ADMIN"];
@@ -15,7 +15,7 @@ const ROLE_HELP: Record<Role, string> = {
 
 /** Portal accounts (administrators only). Temporary passwords are emailed or shown once, and must be changed at first sign-in. */
 export function Users() {
-  const { portal, user, toast } = usePortal();
+  const { portal, user, toast, confirm } = usePortal();
   const [showRemoved, setShowRemoved] = useState(false);
   const list = useLoad(() => portal.users(showRemoved), [showRemoved]);
   const branches = useLoad(() => portal.reference().then((r) => r.branches), []);
@@ -29,7 +29,8 @@ export function Users() {
     try { await p; toast(ok, "ok"); list.reload(); } catch (e) { toast((e as Error).message, "error"); }
   }
   async function signOut(u: PortalUserRow) {
-    if (!confirm(`Sign ${u.displayName} out on every device? Their account stays active; they can sign in again.`)) return;
+    if (!await confirm({ title: `Sign ${u.displayName} out everywhere?`, confirmLabel: "Sign out everywhere", tone: "warn",
+      message: "They are signed out on every device. Their account stays active and they can sign in again." })) return;
     try {
       const r = await portal.signOutUser(u.username);
       toast(r.sessionsEnded ? `${u.displayName} is signed out (${r.sessionsEnded} session${r.sessionsEnded > 1 ? "s" : ""}).` : `${u.displayName} had no open sessions.`, "ok");
@@ -38,9 +39,12 @@ export function Users() {
   }
   async function remove(u: PortalUserRow) {
     const used = !!u.lastLoginAt;
-    if (!confirm(used
-      ? `Remove ${u.displayName}?\n\nThey are signed out at once and can no longer sign in. Because they have used the portal, their name stays in the audit trail and on past decisions, so the username "${u.username}" cannot be used again. Their email address is freed.`
-      : `Delete ${u.displayName}? They never signed in, so the account is deleted completely.`)) return;
+    if (!await confirm(used
+      ? { title: `Remove ${u.displayName}?`, confirmLabel: "Remove", tone: "danger", message: <>
+          <p>They are signed out at once and can no longer sign in.</p>
+          <p>Because they have used the portal, their name stays in the audit trail and on past decisions, so the username <b>{u.username}</b> cannot be used again. Their email address is freed.</p></> }
+      : { title: `Delete ${u.displayName}?`, confirmLabel: "Delete", tone: "danger",
+          message: "They never signed in, so the account is deleted completely." })) return;
     try {
       const r = await portal.removeUser(u.username);
       toast(r.message, "ok");
@@ -101,7 +105,8 @@ export function Users() {
                           <div className="row-actions row-actions--stack">
                             {removed ? (<>
                               <Button size="sm" kind="ghost" icon={<IconHistory />} onClick={() => setHistory(u)}>Activity</Button>
-                              <Button size="sm" kind="secondary" onClick={() => confirm(`Restore ${u.displayName}? They can sign in again with their old password. Add an email address afterwards.`)
+                              <Button size="sm" kind="secondary" onClick={async () => await confirm({ title: `Restore ${u.displayName}?`, confirmLabel: "Restore",
+                                  message: "They can sign in again with their old password. Add an email address afterwards." })
                                 && act(portal.updateUser(u.username, { status: "ACTIVE" }), `${u.displayName} is restored.`)}>Restore</Button>
                             </>) : (<>
                               <Button size="sm" kind="ghost" icon={<IconEdit />} onClick={() => setEditing(u)}>Edit</Button>
@@ -111,7 +116,8 @@ export function Users() {
                                   {!self && <button type="button" onClick={() => signOut(u)}><IconSignOut /> Sign out everywhere</button>}
                                   {u.locked && u.status === "ACTIVE" && <button type="button" onClick={() => act(portal.updateUser(u.username, { status: "ACTIVE" }), `${u.displayName} is unlocked.`)}><IconLock /> Unlock</button>}
                                   {!self && (u.status === "ACTIVE"
-                                    ? <button type="button" onClick={() => confirm(`Disable ${u.displayName}? They are signed out at once and cannot sign in until enabled again.`) && act(portal.updateUser(u.username, { status: "DISABLED" }), `${u.displayName} is disabled.`)}><IconPause /> Disable</button>
+                                    ? <button type="button" onClick={async () => await confirm({ title: `Disable ${u.displayName}?`, confirmLabel: "Disable", tone: "warn",
+                                        message: "They are signed out at once and cannot sign in until enabled again." }) && act(portal.updateUser(u.username, { status: "DISABLED" }), `${u.displayName} is disabled.`)}><IconPause /> Disable</button>
                                     : <button type="button" onClick={() => act(portal.updateUser(u.username, { status: "ACTIVE" }), `${u.displayName} is active again.`)}><IconCheck /> Enable</button>)}
                                   {!self && <button type="button" className="is-danger" onClick={() => remove(u)}><IconTrash /> {u.lastLoginAt ? "Remove" : "Delete"}</button>}
                               </RowMenu>
@@ -160,36 +166,6 @@ export function Users() {
         ))}
       </Drawer>
     </div>
-  );
-}
-
-/**
- * A small actions menu. The list is fixed-positioned under (or above) its button so the table's scroll box cannot clip it.
- * Closes on a choice, an outside click, Escape, or scrolling.
- */
-function RowMenu({ label, children }: { label: string; children: ReactNode }) {
-  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
-  const btn = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!pos) return;
-    const close = (e: Event) => { if (e.type !== "mousedown" || !(e.target as Element).closest?.(".menu__list, .menu__btn")) setPos(null); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setPos(null); };
-    window.addEventListener("mousedown", close); window.addEventListener("scroll", close, true); window.addEventListener("resize", close);
-    window.addEventListener("keydown", esc);
-    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close); window.removeEventListener("keydown", esc); };
-  }, [pos]);
-  function toggle() {
-    if (pos) return setPos(null);
-    const r = btn.current!.getBoundingClientRect();
-    const right = window.innerWidth - r.right;
-    setPos(window.innerHeight - r.bottom < 260 ? { bottom: window.innerHeight - r.top + 4, right } : { top: r.bottom + 4, right });
-  }
-  return (
-    <>
-      <button ref={btn} type="button" className="btn btn--ghost btn--sm menu__btn" aria-haspopup="menu" aria-expanded={!!pos} onClick={toggle}>{label}</button>
-      {pos && <div className="menu__list" role="menu" style={{ position: "fixed", ...pos }} onClick={() => setPos(null)}>{children}</div>}
-    </>
   );
 }
 

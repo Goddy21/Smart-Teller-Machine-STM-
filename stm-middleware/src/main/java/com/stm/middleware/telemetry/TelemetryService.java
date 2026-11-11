@@ -41,6 +41,7 @@ public class TelemetryService {
                 SELECT t.id, t.terminal_code, t.branch_code, t.service_mode, t.software_version,
                        x.status, x.card_stock, x.alarms, x.last_seen, x.modules, x.disabled_services
                 FROM terminals t LEFT JOIN terminal_telemetry x ON x.terminal_id = t.id
+                WHERE t.status <> 'RETIRED'
                 ORDER BY t.terminal_code""")
                 .query((rs, n) -> {
                     OffsetDateTime seen = rs.getObject("last_seen", OffsetDateTime.class);

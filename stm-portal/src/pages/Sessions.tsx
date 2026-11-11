@@ -550,14 +550,15 @@ function CaptureThumb({ c }: { c: Capture }) {
 
 /** Teller decisions the kiosk is waiting for (B-11 referral, B-5 biometric fallback). */
 export function Decisions({ app, onDone }: { app: Application; onDone?: (a: Application) => void }) {
-  const { portal, user, toast } = usePortal();
+  const { portal, user, toast, confirm } = usePortal();
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState<Decision | null>(null);
   if (!can.decide(user.role)) return <p className="muted small">A teller or supervisor decides this application.</p>;
 
   const referral = app.status === "REFERRED";
   async function go(d: Decision) {
-    if (d === "REJECT" && !confirm("Reject this application? The customer is told to visit a branch.")) return;
+    if (d === "REJECT" && !await confirm({ title: "Reject this application?", confirmLabel: "Reject application", tone: "danger",
+      message: "The customer is told to visit a branch. This cannot be undone." })) return;
     setBusy(d);
     try {
       const r = await portal.decide(app.id, d, notes.trim() || undefined);

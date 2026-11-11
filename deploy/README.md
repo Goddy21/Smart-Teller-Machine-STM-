@@ -80,7 +80,11 @@ Then, on the STM:
 
 ## 5. Register the kiosks
 
-Each machine is registered once. Use the provisioning secret from `.env`:
+Each machine is registered once. The easy way is the portal: sign in as an administrator, open **Kiosk fleet** and
+click **Add kiosk**. You give the kiosk ID and branch and get the terminal token, shown once. The same page edits a
+kiosk, replaces its token (**Manage → Replace token**), disables it, or removes it.
+
+From a script, use the provisioning secret from `.env` instead:
 ```bash
 cd /opt/stm/deploy && . ./.env
 curl -sk -X POST https://$SERVER_IP/api/v1/terminals/register \

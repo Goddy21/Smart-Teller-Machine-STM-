@@ -159,7 +159,7 @@ public class PortalInsightsController {
     public List<Map<String, Object>> registry() {
         return rows.list("""
                 SELECT t.terminal_code, t.branch_code, b.name AS branch_name, t.status, t.service_mode, t.software_version,
-                       t.created_at,
+                       t.created_at, t.name, t.location, t.notes, t.token_rotated_at, t.retired_at,
                        (SELECT count(*) FROM stm_sessions s WHERE s.terminal_id = t.id AND s.started_at >= date_trunc('day', now())) AS sessions_today,
                        (SELECT count(*) FROM stm_sessions s WHERE s.terminal_id = t.id) AS sessions_total,
                        (SELECT max(d.issued_at) FROM device_tokens d WHERE d.terminal_id = t.id) AS last_sign_in

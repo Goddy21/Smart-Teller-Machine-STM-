@@ -16,7 +16,7 @@ import { Reconciliation } from "./pages/Reconciliation";
 import { Audit } from "./pages/Audit";
 import { Reference } from "./pages/Reference";
 import { Simulator } from "./pages/Simulator";
-import { useLoad } from "./ui/kit";
+import { ConfirmDialog, useLoad, type ConfirmOptions } from "./ui/kit";
 import {
   IconBook, IconCard, IconHalf, IconMoon, IconSun, IconCash, IconCheck, IconFile, IconGrid, IconLock, IconLogout, IconMonitor, IconPhone, IconRefresh, IconShield, IconUsers, IconVideo,
 } from "./ui/Icons";
@@ -128,13 +128,20 @@ function Shell({ session, onSessionEnded, onSignOut, onChangePassword }: {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500);
   }, []);
 
+  // One confirmation dialog for the whole portal; confirm() resolves when the person answers.
+  const [asking, setAsking] = useState<{ options: ConfirmOptions; answer: (yes: boolean) => void } | null>(null);
+  const confirm = useCallback((options: ConfirmOptions) => new Promise<boolean>((resolve) => {
+    setAsking((prev) => { prev?.answer(false); return { options, answer: resolve }; });
+  }), []);
+  const answer = useCallback((yes: boolean) => setAsking((a) => { a?.answer(yes); return null; }), []);
+
   const ctx: PortalCtx = useMemo(() => ({
-    user, portal, teller, toast,
+    user, portal, teller, toast, confirm,
     go: (page, param) => { location.hash = `/${page}${param ? `/${param}` : ""}`; },
     openSession: (id) => setSessionId(id),
     signOut: () => { void teller.dispose().finally(onSignOut); },
     changePassword: onChangePassword,
-  }), [user, portal, teller, toast, onSignOut, onChangePassword]);
+  }), [user, portal, teller, toast, confirm, onSignOut, onChangePassword]);
 
   const nav = NAV.filter((n) => n.roles.includes(user.role));
   const page = nav.some((n) => n.page === route.page) ? route.page : "overview";
@@ -206,6 +213,7 @@ function Shell({ session, onSessionEnded, onSignOut, onChangePassword }: {
         </div>
       </div>
       <SessionDrawer id={sessionId} onClose={() => setSessionId(null)} />
+      <ConfirmDialog options={asking?.options ?? null} onAnswer={answer} />
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => <div key={t.id} className={`toast toast--${t.tone}`}>{t.text}</div>)}
       </div>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { IconX } from "./Icons";
+import { IconAlert, IconInfo, IconX } from "./Icons";
 
 // ------------------------------------------------------------------ formatting
 
@@ -114,12 +114,14 @@ export function Kpi({ label, value, hint, icon, tone = "brand", onClick }: {
   );
 }
 
-export function Button({ kind = "primary", size = "md", icon, children, onClick, disabled, type = "button", title }: {
+export function Button({ kind = "primary", size = "md", icon, children, onClick, disabled, type = "button", title, form }: {
   kind?: "primary" | "secondary" | "ghost" | "danger" | "success"; size?: "sm" | "md" | "lg"; icon?: ReactNode;
   children?: ReactNode; onClick?: () => void; disabled?: boolean; type?: "button" | "submit"; title?: string;
+  /** id of the form this button submits, when it sits outside it (a dialog's footer). */
+  form?: string;
 }) {
   return (
-    <button type={type} className={`btn btn--${kind} btn--${size}`} onClick={onClick} disabled={disabled} title={title}>
+    <button type={type} form={form} className={`btn btn--${kind} btn--${size}`} onClick={onClick} disabled={disabled} title={title}>
       {icon}{children && <span>{children}</span>}
     </button>
   );
@@ -173,6 +175,65 @@ export function Drawer({ open, title, subtitle, onClose, children, footer }: {
         {footer && <footer className="drawer__foot">{footer}</footer>}
       </aside>
     </div>
+  );
+}
+
+/** A centred dialog. Escape and a click outside close it (not while busy). */
+export function Modal({ open, title, icon, tone = "info", onClose, children, footer, size = "md", busy = false }: {
+  open: boolean; title: ReactNode; icon?: ReactNode; tone?: "info" | "warn" | "danger" | "good"; onClose: () => void;
+  children: ReactNode; footer?: ReactNode; size?: "sm" | "md" | "lg"; busy?: boolean;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const before = document.activeElement as HTMLElement | null;
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", k);
+    // Focus the first field, or the main button, so Enter and typing work at once.
+    const first = box.current?.querySelector<HTMLElement>("[data-autofocus], input:not([type=hidden]), select, textarea") ?? box.current?.querySelector<HTMLElement>(".modal__foot .btn:last-child");
+    first?.focus();
+    return () => { window.removeEventListener("keydown", k); before?.focus?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  if (!open) return null;
+  return (
+    <div className="modal-wrap" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+      <div ref={box} className={`modal modal--${size}`} role="dialog" aria-modal="true">
+        <header className="modal__head">
+          {icon && <span className={`modal__icon modal__icon--${tone}`}>{icon}</span>}
+          <h2 className="modal__title">{title}</h2>
+          <button type="button" className="icon-btn" onClick={onClose} disabled={busy} aria-label="Close"><IconX /></button>
+        </header>
+        <div className="modal__body">{children}</div>
+        {footer && <footer className="modal__foot">{footer}</footer>}
+      </div>
+    </div>
+  );
+}
+
+export interface ConfirmOptions {
+  title: string;
+  /** What will happen, in plain words. */
+  message: ReactNode;
+  /** The button that goes ahead, e.g. "Lock kiosk". */
+  confirmLabel: string;
+  cancelLabel?: string;
+  /** danger: red button for things that cannot be undone or that interrupt a customer. */
+  tone?: "info" | "warn" | "danger";
+}
+
+/** The portal's replacement for the browser's confirm(): opened through usePortal().confirm(...). */
+export function ConfirmDialog({ options, onAnswer }: { options: ConfirmOptions | null; onAnswer: (yes: boolean) => void }) {
+  const tone = options?.tone ?? "info";
+  return (
+    <Modal open={!!options} size="sm" tone={tone} icon={tone === "info" ? <IconInfo /> : <IconAlert />} title={options?.title ?? ""}
+           onClose={() => onAnswer(false)}
+           footer={<>
+             <Button kind="ghost" onClick={() => onAnswer(false)}>{options?.cancelLabel ?? "Cancel"}</Button>
+             <Button kind={tone === "danger" ? "danger" : "primary"} onClick={() => onAnswer(true)}>{options?.confirmLabel}</Button>
+           </>}>
+      <div className="modal__text">{options?.message}</div>
+    </Modal>
   );
 }
 
@@ -302,5 +363,35 @@ export function Pager({ data, onPage, onSize, compact }: {
         <button type="button" className="btn btn--secondary btn--sm" disabled={data.page >= data.pages} onClick={() => onPage(data.pages)} aria-label="Last page" title="Last page">»</button>
       </span>
     </div>
+  );
+}
+
+/**
+ * A small actions menu. The list is fixed-positioned under (or above) its button so the table's scroll box cannot clip it.
+ * Closes on a choice, an outside click, Escape, or scrolling.
+ */
+export function RowMenu({ label, children }: { label: string; children: ReactNode }) {
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!pos) return;
+    const close = (e: Event) => { if (e.type !== "mousedown" || !(e.target as Element).closest?.(".menu__list, .menu__btn")) setPos(null); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setPos(null); };
+    window.addEventListener("mousedown", close); window.addEventListener("scroll", close, true); window.addEventListener("resize", close);
+    window.addEventListener("keydown", esc);
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close); window.removeEventListener("keydown", esc); };
+  }, [pos]);
+  function toggle() {
+    if (pos) return setPos(null);
+    const r = btn.current!.getBoundingClientRect();
+    const right = window.innerWidth - r.right;
+    setPos(window.innerHeight - r.bottom < 260 ? { bottom: window.innerHeight - r.top + 4, right } : { top: r.bottom + 4, right });
+  }
+  return (
+    <>
+      <button ref={btn} type="button" className="btn btn--ghost btn--sm menu__btn" aria-haspopup="menu" aria-expanded={!!pos} onClick={toggle}>{label}</button>
+      {pos && <div className="menu__list" role="menu" style={{ position: "fixed", ...pos }} onClick={() => setPos(null)}>{children}</div>}
+    </>
   );
 }
