@@ -39,9 +39,19 @@ public class IdentityController {
     private final Json json;
     private final StmAudit audit;
 
+    private final org.springframework.beans.factory.ObjectProvider<com.stm.middleware.backend.sim.SimControl> sim;
+
+    /** Test mode (Simulator page, "Accept everything"): the kiosk's input is accepted as it is. */
+    private boolean testMode() {
+        var c = sim.getIfAvailable();
+        return c != null && c.acceptAll();
+    }
+
     public IdentityController(IdentityServices identity, CoreBanking core, Applications applications, Captures captures,
                               CustomerTokens customerTokens, SessionStore sessions, JdbcClient jdbc, Json json,
-                              StmAudit audit) {
+                              StmAudit audit,
+            org.springframework.beans.factory.ObjectProvider<com.stm.middleware.backend.sim.SimControl> sim) {
+        this.sim = sim;
         this.identity = identity;
         this.core = core;
         this.applications = applications;
@@ -83,6 +93,9 @@ public class IdentityController {
         String country = req.country() == null ? (req.documentType().equals("NATIONAL_ID") ? "KEN" : doc.country) : iso3(req.country());
 
         Optional<RegistryRecord> found = identity.lookup(req.documentType(), country, doc.number);
+        if (found.isEmpty() && testMode()) {
+            found = identity.registerUnknown(req.documentType(), country, doc.number, doc.serial, doc.surname, doc.given, doc.dob, doc.sex);
+        }
         String result;
         IdentityServices.DocumentChecks checks = new IdentityServices.DocumentChecks("PASS", "PASS");
         if (found.isEmpty()) {
@@ -93,7 +106,7 @@ public class IdentityController {
                     Captures.decode("images.uv", req.images() == null ? null : req.images().uv()));
             boolean same = (doc.surname == null || norm(doc.surname).equals(norm(r.surname())))
                     && (doc.dob == null || doc.dob.equals(r.dateOfBirth()));
-            result = same && checks.pass() ? "MATCH" : "MISMATCH";
+            result = testMode() || (same && checks.pass()) ? "MATCH" : "MISMATCH";
         }
 
         String verificationId = Ids.next("idv");
@@ -139,7 +152,8 @@ public class IdentityController {
                     .detail("documentChecks", checks).detail("offerTeller", left == 0);
         }
         if (app != null) {
-            if (existing) throw Errors.existingCustomer(verificationId);
+            // Test mode: an existing customer may go on; B-12 adds the new account to their customer record.
+            if (existing && !testMode()) throw Errors.existingCustomer(verificationId);
             Map<String, Object> cols = new HashMap<>();
             cols.put("status", "IDENTITY_CAPTURED");
             cols.put("verification_id", verificationId);
@@ -174,13 +188,15 @@ public class IdentityController {
         return m;
     }
 
-    private record Doc(String number, String serial, String surname, LocalDate dob, LocalDate expiry, String country) {}
+    private record Doc(String number, String serial, String surname, LocalDate dob, LocalDate expiry, String country,
+                       String given, String sex) {}
 
     private Doc read(DocumentRequest req) {
         if (req.mrz() != null && req.mrz().line1() != null && req.mrz().line2() != null) {
             try {
                 Mrz m = Mrz.parse(req.mrz().line1(), req.mrz().line2());
-                return new Doc(m.documentNumber(), null, m.surname(), m.dateOfBirth(), m.expiryDate(), m.issuingState());
+                return new Doc(m.documentNumber(), null, m.surname(), m.dateOfBirth(), m.expiryDate(), m.issuingState(),
+                        m.givenNames(), m.sex());
             } catch (Mrz.MrzException e) {
                 throw Errors.validation("mrz", "MRZ could not be read: " + e.getMessage());
             }
@@ -189,8 +205,21 @@ public class IdentityController {
         if (o == null || o.documentNumber() == null || o.documentNumber().isBlank()) {
             throw Errors.validation("ocr.documentNumber", "ocr.documentNumber or mrz is required");
         }
+        boolean lax = testMode();
         return new Doc(o.documentNumber().replace(" ", "").toUpperCase(), o.serialNumber(), o.surname(),
-                date("ocr.dateOfBirth", o.dateOfBirth()), date("ocr.expiryDate", o.expiryDate()), null);
+                lax ? laxDate(o.dateOfBirth()) : date("ocr.dateOfBirth", o.dateOfBirth()),
+                lax ? laxDate(o.expiryDate()) : date("ocr.expiryDate", o.expiryDate()), null, o.givenNames(), null);
+    }
+
+    /** Test mode: yyyy-mm-dd, dd/mm/yyyy, dd-mm-yyyy or dd.mm.yyyy; a date that cannot be read is simply left out. */
+    private static LocalDate laxDate(String s) {
+        if (s == null || s.isBlank()) return null;
+        for (String f : new String[]{"yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "dd.MM.yyyy", "d/M/yyyy"}) {
+            try {
+                return LocalDate.parse(s.trim(), java.time.format.DateTimeFormatter.ofPattern(f));
+            } catch (DateTimeParseException ignored) { /* next format */ }
+        }
+        return null;
     }
 
     private static LocalDate date(String field, String s) {

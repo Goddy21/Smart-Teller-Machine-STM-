@@ -35,6 +35,9 @@ services:
       postgres: { condition: service_healthy }
     environment:
       SPRING_PROFILES_ACTIVE: demo                  # simulated bank systems until the real adapters exist
+      # Test mode: accept whatever the kiosk sends (any ID, fingerprint, KRA PIN, signature, code). Set false in .env
+      # to test the failure paths; the Simulator page in the portal also switches it.
+      SIM_ACCEPT_ALL: ${SIM_ACCEPT_ALL:-true}
       DB_URL: jdbc:postgresql://postgres:5432/stm
       DB_USER: stm
       DB_PASSWORD: ${DB_PASSWORD}

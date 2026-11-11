@@ -3,4 +3,7 @@
 stm:
   sim:
     latency-ms: 120        # simulated back-end latency; 0 for the fastest tests
+    # TEST MODE: true = accept whatever the kiosk sends (any ID, face, fingerprint, KRA PIN, signature, code). Also
+    # switchable on the portal's Simulator page. False = the scripted test identities behave as documented.
+    accept-all: ${SIM_ACCEPT_ALL:false}
     fixed-otp: "123456"    # every one-time code is 123456 (blank = random codes, printed in the middleware log by the simulated SMS gateway)

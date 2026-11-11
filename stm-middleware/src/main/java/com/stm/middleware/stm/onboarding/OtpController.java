@@ -150,7 +150,8 @@ public class OtpController {
                     "Umekosea mara nyingi. Omba nambari mpya.", false);
         }
         if (o.expires().isBefore(OffsetDateTime.now())) throw Errors.otpExpired();
-        if (!Hashing.constantTimeEquals(o.hash(), Hashing.sha256Hex(req.otpRef() + ":" + req.code()))) {
+        boolean anyCode = sim.getIfAvailable() != null && sim.getIfAvailable().acceptAll();   // test mode: any code
+        if (!anyCode && !Hashing.constantTimeEquals(o.hash(), Hashing.sha256Hex(req.otpRef() + ":" + req.code()))) {
             int left = o.left() - 1;
             jdbc.sql("UPDATE otps SET attempts_left = :l WHERE ref = :r").param("l", left).param("r", req.otpRef()).update();
             audit.session(ctx, "OTP_FAILED", "otpRef", req.otpRef(), "attemptsLeft", left);

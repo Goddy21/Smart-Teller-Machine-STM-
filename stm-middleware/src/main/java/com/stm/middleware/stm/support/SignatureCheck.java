@@ -22,6 +22,12 @@ public final class SignatureCheck {
 
     private SignatureCheck() {}
 
+    /** relaxed (test mode): anything is accepted, even a placeholder or a tiny image. */
+    public static Quality validate(String field, byte[] image, boolean relaxed) {
+        if (relaxed) return new Quality(0, 0, 0);
+        return validate(field, image);
+    }
+
     public static Quality validate(String field, byte[] image) {
         if (image == null || image.length < 32) throw unreadable("The signature is empty.", "EMPTY");
         String mime = Captures.mimeOf(image);

@@ -22,10 +22,12 @@ export function Simulator() {
   if (!sim.data) return <Spinner />;
   const s = sim.data;
 
-  async function set(patch: { coreDown?: boolean; latencyMs?: number }) {
+  async function set(patch: { coreDown?: boolean; latencyMs?: number; acceptAll?: boolean }) {
     try {
       sim.setData(await portal.setSimulator(patch));
-      toast(patch.coreDown === true ? "Core banking is now down: the kiosks show “Service unavailable”." : "Simulator updated.", "ok");
+      toast(patch.coreDown === true ? "Core banking is now down: the kiosks show “Service unavailable”."
+        : patch.acceptAll === true ? "Test mode on: whatever the kiosk sends is accepted."
+        : patch.acceptAll === false ? "Test mode off: the test identities behave as scripted again." : "Simulator updated.", "ok");
     } catch (e) {
       toast((e as Error).message, "error");
     }
@@ -33,6 +35,13 @@ export function Simulator() {
 
   return (
     <div className="stack">
+      {s.acceptAll && (
+        <div className="callout callout--good">
+          <IconAlert />
+          <div><b>Test mode is on: everything the kiosk sends is accepted</b>
+            <span>Any ID or passport number (unknown ones are added to the registry from what was scanned), any face, fingerprint, KRA PIN, signature and one-time code. No screening hits or SIM-swap blocks, and an existing customer may open another account. Turn it off to test the failure paths with the test identities below.</span></div>
+        </div>
+      )}
       <div className="callout callout--warn">
         <IconAlert />
         <div><b>Demo back ends</b><span>Simulated adapters stand in for core banking, IPRS/KRA, the card system and the SMS gateway. They are off in the prod profile.</span></div>
@@ -41,6 +50,7 @@ export function Simulator() {
       <div className="grid-2">
         <Card title="Switches">
           <div className="stack stack--sm">
+            <label className="switch"><input type="checkbox" checked={s.acceptAll} disabled={!edit} onChange={(e) => set({ acceptAll: e.target.checked })} />Accept everything (test mode)</label>
             <label className="switch"><input type="checkbox" checked={s.coreDown} disabled={!edit} onChange={(e) => set({ coreDown: e.target.checked })} />Core banking down</label>
             <label className="form">
               <span>Latency per call: <b>{s.latencyMs} ms</b></span>

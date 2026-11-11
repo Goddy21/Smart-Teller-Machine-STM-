@@ -40,9 +40,19 @@ public class CustomerServicesController {
     private final JdbcClient jdbc;
     private final StmAudit audit;
 
+    private final org.springframework.beans.factory.ObjectProvider<com.stm.middleware.backend.sim.SimControl> sim;
+
+    /** Test mode (Simulator page, "Accept everything"): the kiosk's input is accepted as it is. */
+    private boolean testMode() {
+        var c = sim.getIfAvailable();
+        return c != null && c.acceptAll();
+    }
+
     public CustomerServicesController(CoreBanking core, CardSystem cms, IdentityServices identity, KycChecks kyc, Owned owned,
                                       Safeguards safeguards, ServiceEvents events, SmsService sms, Refs refs,
-                                      JdbcClient jdbc, StmAudit audit) {
+                                      JdbcClient jdbc, StmAudit audit,
+            org.springframework.beans.factory.ObjectProvider<com.stm.middleware.backend.sim.SimControl> sim) {
+        this.sim = sim;
         this.core = core;
         this.cms = cms;
         this.identity = identity;
@@ -182,8 +192,9 @@ public class CustomerServicesController {
         for (Finger f : req.fingerprints()) {
             if (!seen.add(f.finger())) throw Errors.validation("fingerprints", "Each finger may appear once");
             byte[] tpl = Captures.decode("fingerprints.template", f.template());
+            if ((tpl == null || tpl.length == 0) && testMode()) tpl = new byte[]{0};
             if (tpl == null || tpl.length == 0) throw Errors.validation("fingerprints.template", "template is required");
-            if (f.quality() < 50) {
+            if (f.quality() < 50 && !testMode()) {
                 throw Errors.of(HttpStatus.UNPROCESSABLE_ENTITY, "BIOMETRIC_QUALITY_LOW",
                         "That print was not clear enough. Clean your finger and try again.",
                         "Alama hiyo haikuwa wazi vya kutosha. Safisha kidole chako na ujaribu tena.", true).detail("finger", f.finger());
@@ -329,7 +340,8 @@ public class CustomerServicesController {
         ctx.requireCustomer(customerId);
         ctx.requireStrongAuth();
         byte[] image = Captures.decode("image", req.image());
-        SignatureCheck.Quality q = SignatureCheck.validate("image", image);
+        if ((image == null || image.length == 0) && testMode()) image = "test-mode signature placeholder".getBytes();
+        SignatureCheck.Quality q = SignatureCheck.validate("image", image, testMode());
         safeguards.requireSettledMobile(customerId);
         boolean replaced = core.signature(customerId).isPresent();
         CoreBanking.Signature sig = core.registerSignature(customerId, image, Captures.mimeOf(image), "STM_UPDATE");

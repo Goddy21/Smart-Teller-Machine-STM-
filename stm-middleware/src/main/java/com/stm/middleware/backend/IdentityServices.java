@@ -50,6 +50,15 @@ public interface IdentityServices {
 
     Optional<RegistryRecord> lookup(String documentType, String country, String documentNumber);
 
+    /**
+     * Test mode only (simulator): records a document the registry does not know, from what the kiosk scanned, so the
+     * journey can go on. Real registries never do this; the default returns nothing.
+     */
+    default Optional<RegistryRecord> registerUnknown(String documentType, String country, String documentNumber, String serial,
+                                                     String surname, String givenNames, LocalDate dateOfBirth, String gender) {
+        return Optional.empty();
+    }
+
     /** Expiry and tamper checks on the scanned document (images from the device agent). */
     DocumentChecks checkDocument(RegistryRecord record, LocalDate documentExpiry, byte[] front, byte[] uv);
 

@@ -29,7 +29,10 @@ public class KycChecks {
     private final long blockHours;
     private final int lowYears, mediumYears, highYears, dueSoonDays;
 
+    private final org.springframework.beans.factory.ObjectProvider<com.stm.middleware.backend.sim.SimControl> sim;
+
     public KycChecks(Telco telco, CoreBanking core,
+                     org.springframework.beans.factory.ObjectProvider<com.stm.middleware.backend.sim.SimControl> sim,
                      @Value("${stm.kyc.sim-swap-block-hours:72}") long blockHours,
                      @Value("${stm.kyc.review-years.low:3}") int lowYears,
                      @Value("${stm.kyc.review-years.medium:2}") int mediumYears,
@@ -37,6 +40,7 @@ public class KycChecks {
                      @Value("${stm.kyc.due-soon-days:30}") int dueSoonDays) {
         this.telco = telco;
         this.core = core;
+        this.sim = sim;
         this.blockHours = blockHours;
         this.lowYears = lowYears;
         this.mediumYears = mediumYears;
@@ -113,7 +117,9 @@ public class KycChecks {
         out.put("biometricsEnrolled", core.biometrics(customerId).enrolled());
         out.put("signatureOnFile", core.signature(customerId).isPresent());
         // Self-service is allowed while KYC is current and nothing needs a person to look at it.
-        out.put("selfServiceAllowed", !"REFRESH_DUE".equals(status) && kraOnFile && !highRisk);
+        var simControl = sim.getIfAvailable();
+        boolean testMode = simControl != null && simControl.acceptAll();   // test mode: nothing sends the customer to a teller
+        out.put("selfServiceAllowed", testMode || (!"REFRESH_DUE".equals(status) && kraOnFile && !highRisk));
         return out;
     }
 }

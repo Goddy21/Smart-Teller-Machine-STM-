@@ -48,7 +48,30 @@ public class SimulatedIdentity implements IdentityServices {
     }
 
     @Override
+    public Optional<RegistryRecord> registerUnknown(String documentType, String country, String documentNumber, String serial,
+                                                    String surname, String givenNames, LocalDate dateOfBirth, String gender) {
+        if (!control.acceptAll() || documentNumber == null || documentNumber.isBlank()) return Optional.empty();
+        String number = documentNumber.replace(" ", "").toUpperCase();
+        String nat = country == null || country.isBlank() ? "KEN" : country.toUpperCase();
+        String g = gender == null || gender.isBlank() ? "U" : gender.substring(0, 1).toUpperCase();
+        jdbc.sql("""
+                INSERT INTO sim_registry (document_number, document_type, country, serial_number, surname, given_names,
+                                          date_of_birth, gender, nationality, scenario, notes)
+                VALUES (:n, :t, :c, :s, :sn, :gn, :dob, :g, :c, 'HAPPY_PATH', 'Added in test mode from what the kiosk scanned')
+                ON CONFLICT (document_number) DO NOTHING""")
+                .param("n", number).param("t", documentType).param("c", nat).param("s", serial)
+                .param("sn", blank(surname, "TEST")).param("gn", blank(givenNames, "CUSTOMER"))
+                .param("dob", dateOfBirth == null ? LocalDate.of(1990, 1, 1) : dateOfBirth).param("g", g).update();
+        return lookup(documentType, nat, number);
+    }
+
+    private static String blank(String s, String fallback) {
+        return s == null || s.isBlank() ? fallback : s.trim().toUpperCase();
+    }
+
+    @Override
     public DocumentChecks checkDocument(RegistryRecord r, LocalDate documentExpiry, byte[] front, byte[] uv) {
+        if (control.acceptAll()) return new DocumentChecks("PASS", "PASS");
         LocalDate today = LocalDate.now();
         boolean expired = (documentExpiry != null && documentExpiry.isBefore(today))
                 || (r.expiry() != null && r.expiry().isBefore(today));
@@ -84,6 +107,7 @@ public class SimulatedIdentity implements IdentityServices {
     @Override
     public MatchResult matchFace(RegistryRecord r, byte[] faceImage, double livenessScore) {
         control.core();
+        if (control.acceptAll()) return new MatchResult("MATCH", 0.992);
         if (livenessScore < 0.5) return new MatchResult("NO_MATCH", 0.0);
         if ("BIOMETRIC_NO_MATCH".equals(r.scenario())) return new MatchResult("NO_MATCH", 0.412);
         return new MatchResult("MATCH", 0.992);
@@ -92,6 +116,7 @@ public class SimulatedIdentity implements IdentityServices {
     @Override
     public MatchResult matchFingerprint(RegistryRecord r, String finger, byte[] template, int quality) {
         control.core();
+        if (control.acceptAll()) return new MatchResult("MATCH", 0.95);
         if (quality < 40) return new MatchResult("NO_MATCH", 0.21);
         return new MatchResult("MATCH", 0.95);
     }
@@ -100,6 +125,11 @@ public class SimulatedIdentity implements IdentityServices {
     public KraResult validateKraPin(String kraPin, String idNumber) {
         control.core();
         String pin = kraPin == null ? "" : kraPin.trim().toUpperCase();
+        if (control.acceptAll()) {
+            String name = jdbc.sql("SELECT given_names || ' ' || surname FROM sim_registry WHERE document_number = :n")
+                    .param("n", idNumber == null ? "" : idNumber.replace(" ", "").toUpperCase()).query(String.class).optional().orElse(null);
+            return new KraResult(true, name, true, "ACTIVE");
+        }
         if (!pin.matches("[AP]\\d{9}[A-Z]")) return new KraResult(false, null, false, "INVALID_FORMAT");
         record Row(String surname, String given, String pin, String status) {}
         Optional<Row> byPin = jdbc.sql("SELECT surname, given_names, kra_pin, kra_status FROM sim_registry WHERE kra_pin = :p")
@@ -120,6 +150,7 @@ public class SimulatedIdentity implements IdentityServices {
     @Override
     public Screening screen(RegistryRecord r) {
         control.core();
+        if (control.acceptAll()) return new Screening("CLEAR", "CLEAR");
         return "SCREENING_REFERRED".equals(r.scenario()) ? new Screening("CLEAR", "HIT") : new Screening("CLEAR", "CLEAR");
     }
 }

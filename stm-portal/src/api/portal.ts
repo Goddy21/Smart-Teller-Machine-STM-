@@ -251,7 +251,7 @@ export interface DeviceJournalRow { terminalCode: string; seq: number; at: strin
 export interface SmsRow { id: string; sessionId: string | null; template: string; mobile: string; language: string; body: string; status: string; createdAt: string }
 
 export interface Simulator {
-  coreDown: boolean; latencyMs: number; fixedOtp: string | null; devPinBlockExample: { pin: string; pinBlock: string };
+  coreDown: boolean; latencyMs: number; acceptAll: boolean; fixedOtp: string | null; devPinBlockExample: { pin: string; pinBlock: string };
   identities: { documentNumber: string; documentType: string; country: string; surname: string; givenNames: string; dateOfBirth: string; gender: string; kraPin: string | null; kraStatus: string; scenario: string; notes: string | null }[];
   paybills: { paybill: string; name: string }[];
 }
@@ -432,7 +432,7 @@ export class PortalApi {
 
   // ---- simulated back ends (demo profile)
   simulator() { return this.get<Simulator>("/simulator"); }
-  setSimulator(s: { coreDown?: boolean; latencyMs?: number }) { return this.put<Simulator>("/simulator", s); }
+  setSimulator(s: { coreDown?: boolean; latencyMs?: number; acceptAll?: boolean }) { return this.put<Simulator>("/simulator", s); }
   simCustomers(q?: string) { return this.get<SimCustomer[]>("/simulator/customers", { q }); }
   simPostings(accountId: string) { return this.get<Posting[]>(`/simulator/accounts/${encodeURIComponent(accountId)}/postings`); }
   simGl() { return this.get<{ gl: string; currency: string; balance: number; postings: number }[]>("/simulator/gl"); }

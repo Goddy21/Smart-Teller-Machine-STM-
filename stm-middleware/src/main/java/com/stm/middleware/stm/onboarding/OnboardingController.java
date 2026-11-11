@@ -43,10 +43,20 @@ public class OnboardingController {
     private final Json json;
     private final StmAudit audit;
 
+    private final org.springframework.beans.factory.ObjectProvider<com.stm.middleware.backend.sim.SimControl> sim;
+
+    /** Test mode (Simulator page, "Accept everything"): the kiosk's input is accepted as it is. */
+    private boolean testMode() {
+        var c = sim.getIfAvailable();
+        return c != null && c.acceptAll();
+    }
+
     public OnboardingController(Applications applications, IdentityController identityController,
                                 IdentityServices identity, CoreBanking core, DeviceHealthService health,
                                 SessionStore sessions, CustomerTokens customerTokens, Captures captures, SmsService sms,
-                                Idempotency idempotency, Refs refs, JdbcClient jdbc, Json json, StmAudit audit) {
+                                Idempotency idempotency, Refs refs, JdbcClient jdbc, Json json, StmAudit audit,
+            org.springframework.beans.factory.ObjectProvider<com.stm.middleware.backend.sim.SimControl> sim) {
+        this.sim = sim;
         this.applications = applications;
         this.identityController = identityController;
         this.identity = identity;
@@ -127,7 +137,7 @@ public class OnboardingController {
     @PostMapping("/kyc/kra-pin/validate")
     public Map<String, Object> kra(Ctx ctx, @Valid @RequestBody KraRequest req) {
         IdentityServices.KraResult r = identity.validateKraPin(req.kraPin(), req.idNumber());
-        if (!r.valid() || !r.matchesId()) throw Errors.kraPinInvalid(r.status());
+        if (!testMode() && (!r.valid() || !r.matchesId())) throw Errors.kraPinInvalid(r.status());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("valid", true);
         out.put("taxpayerName", r.taxpayerName());
@@ -151,7 +161,7 @@ public class OnboardingController {
         if ("REFERRED".equals(a.status())) throw Errors.screeningReferred(id);
         applications.expect(a, "IDENTITY_VERIFIED", "KYC_CAPTURED");
         IdentityServices.KraResult kra = identity.validateKraPin(req.kraPin(), a.idNumber());
-        if (!kra.valid() || !kra.matchesId()) throw Errors.kraPinInvalid(kra.status());
+        if (!testMode() && (!kra.valid() || !kra.matchesId())) throw Errors.kraPinInvalid(kra.status());
         String mobile = SmsService.normalise("mobile", req.mobile());
         RegistryRecord r = identityController.registryOfVerification(a.verificationId());
         IdentityServices.Screening screening = identity.screen(r);
@@ -189,7 +199,7 @@ public class OnboardingController {
         Application a = applications.expect(applications.mine(ctx, id), "PHONE_VERIFIED", "SIGNATURE_CAPTURED");
         byte[] png = Captures.decode("image", req.image());
         // Not an empty pad and not a scribbled-over box: this image becomes the specimen on the account (B-12).
-        SignatureCheck.Quality quality = SignatureCheck.validate("image", png);
+        SignatureCheck.Quality quality = SignatureCheck.validate("image", png, testMode());
         String sigId = Ids.next("sig");
         captures.store("APPLICATION", id, "SIGNATURE", png);
         applications.update(a.id(), Map.of("signature_id", sigId, "status", "SIGNATURE_CAPTURED"));

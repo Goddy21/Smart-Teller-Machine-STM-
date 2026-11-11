@@ -34,6 +34,7 @@ public class SimulatorController {
     public Map<String, Object> state() {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("coreDown", control.coreDown());
+        out.put("acceptAll", control.acceptAll());
         out.put("latencyMs", control.latencyMs());
         out.put("fixedOtp", control.fixedOtp());
         out.put("devPinBlockExample", Map.of("pin", "2580", "pinBlock", DevPinBlock.encode("2580")));
@@ -45,14 +46,15 @@ public class SimulatorController {
         return out;
     }
 
-    public record Switches(Boolean coreDown, Integer latencyMs) {}
+    public record Switches(Boolean coreDown, Integer latencyMs, Boolean acceptAll) {}
 
     @PutMapping
     public Map<String, Object> set(@AuthenticationPrincipal PortalUser user, @RequestBody Switches req) {
         if (req.coreDown() != null) control.setCoreDown(req.coreDown());
         if (req.latencyMs() != null) control.setLatencyMs(req.latencyMs());
+        if (req.acceptAll() != null) control.setAcceptAll(req.acceptAll());
         audit.record("SIMULATOR_CHANGED", "simulator", null, Map.of("coreDown", control.coreDown(),
-                "latencyMs", control.latencyMs(), "by", user == null ? "portal-key" : user.username()));
+                "latencyMs", control.latencyMs(), "acceptAll", control.acceptAll(), "by", user == null ? "portal-key" : user.username()));
         return state();
     }
 

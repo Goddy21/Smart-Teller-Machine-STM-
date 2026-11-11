@@ -26,6 +26,7 @@ public class SimulatedTelco implements Telco {
     @Override
     public Optional<OffsetDateTime> lastSimSwap(String msisdn) {
         control.core();
+        if (control.acceptAll()) return Optional.empty();   // test mode: no SIM swaps
         return jdbc.sql("SELECT now() - make_interval(hours => hours_ago) FROM sim_sim_swaps WHERE msisdn = :m")
                 .param("m", msisdn).query(OffsetDateTime.class).optional();
     }

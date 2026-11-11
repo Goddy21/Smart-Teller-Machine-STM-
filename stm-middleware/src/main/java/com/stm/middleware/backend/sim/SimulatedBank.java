@@ -360,6 +360,7 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
         long n = jdbc.sql("SELECT count(*) FROM sim_biometrics WHERE customer_id = :c AND finger = :f")
                 .param("c", customerId).param("f", finger).query(Long.class).single();
         if (n == 0) return Optional.empty();
+        if (control.acceptAll()) return Optional.of(new IdentityServices.MatchResult("MATCH", 0.97));
         return Optional.of(quality < 40 ? new IdentityServices.MatchResult("NO_MATCH", 0.24) : new IdentityServices.MatchResult("MATCH", 0.97));
     }
 
