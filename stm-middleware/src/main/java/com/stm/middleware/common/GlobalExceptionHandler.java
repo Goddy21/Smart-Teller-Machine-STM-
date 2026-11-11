@@ -50,7 +50,18 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(Exception.class)
-    ResponseEntity<ApiError> other(Exception e) {
+    ResponseEntity<ApiError> other(Exception e, jakarta.servlet.http.HttpServletResponse response) {
+        // The browser went away (a portal tab closed while the live kiosk updates were streaming, a kiosk lost its
+        // network): nothing to answer and nothing wrong with the server, so no error and no stack trace.
+        if (clientGone(e)) {
+            log.debug("Client disconnected: {}", e.toString());
+            return null;
+        }
+        String type = response.getContentType();
+        if (type != null && type.startsWith("text/event-stream")) {   // an error body cannot be written into a stream
+            log.warn("Live update stream ended: {}", e.toString());
+            return null;
+        }
         // Spring MVC's own client errors (405, 404, 415, missing parameter/part...) carry their status.
         if (e instanceof ErrorResponse er) {
             return ResponseEntity.status(er.getStatusCode()).body(ApiError.of("REQUEST_REJECTED", er.getBody().getDetail()));
@@ -58,5 +69,18 @@ public class GlobalExceptionHandler {
         log.error("Unhandled error", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiError.of("INTERNAL_ERROR", "Unexpected error"));
+    }
+
+    /** Broken pipe, connection reset, or the async request already completed because the client left. */
+    static boolean clientGone(Throwable e) {
+        for (Throwable x = e; x != null; x = x.getCause() == x ? null : x.getCause()) {
+            String n = x.getClass().getSimpleName();
+            if (n.equals("ClientAbortException") || n.equals("AsyncRequestNotUsableException")) return true;
+            if (x instanceof java.io.IOException) {
+                String m = String.valueOf(x.getMessage()).toLowerCase();
+                if (m.contains("broken pipe") || m.contains("connection reset") || m.contains("connection was aborted")) return true;
+            }
+        }
+        return false;
     }
 }
