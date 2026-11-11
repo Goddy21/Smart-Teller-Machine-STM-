@@ -824,3 +824,14 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; font: inher
 .fleet-summary .btn { margin-left: auto; }
 .fleet-summary .live + .btn, .fleet-summary .btn + .live { margin-left: 0; }
 .fleet-summary .btn span { color: inherit; font-weight: inherit; }
+
+.conn { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; color: var(--muted); }
+.conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2, #9aa0c0); }
+.conn.is-on { color: var(--good); } .conn.is-on .dot { background: var(--good); box-shadow: 0 0 0 3px var(--good-bg); }
+.menu__list button:disabled { opacity: .45; cursor: not-allowed; }
+.menu__list button:disabled:hover { background: none; }
+.drawer .kiosk { box-shadow: none; border: 1px solid var(--line); }
+.table td.num, .table th.num { white-space: nowrap; }
+.input--rate { width: 110px; height: 34px; text-align: right; }
+.date-range { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.date-range .input { width: 150px; }

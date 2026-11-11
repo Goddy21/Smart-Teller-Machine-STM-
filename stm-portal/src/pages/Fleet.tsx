@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { usePortal } from "../context";
 import { can } from "../auth";
 import type { TerminalCommand, TerminalCreated, TerminalRow, TerminalView } from "../api/portal";
-import { Badge, Button, Card, Empty, ErrorNote, fmt, Modal, Mono, RowMenu, Spinner, useLoad } from "../ui/kit";
+import { Badge, Button, Card, Drawer, Empty, ErrorNote, fmt, Modal, Mono, Pager, RowMenu, Segmented, Spinner, useClientPage, useDebounced, useLoad } from "../ui/kit";
 import { Meter } from "../ui/charts";
 import {
-  IconCheck, IconCopy, IconEdit, IconKey, IconLock, IconMapPin, IconMonitor, IconPause, IconPlus, IconPower, IconRefresh, IconTrash, IconUnlock,
+  IconAlert, IconCheck, IconCopy, IconEdit, IconKey, IconLock, IconMapPin, IconMonitor, IconPause, IconPlus, IconPower, IconRefresh, IconSearch, IconTrash, IconUnlock,
 } from "../ui/Icons";
 import { label, MODULE_LABEL, SERVICE_LABEL } from "../ui/labels";
 
@@ -15,6 +15,11 @@ const STOCK_FULL = 500;
 export function Fleet() {
   const { portal, toast, confirm, user } = usePortal();
   const admin = can.manageKiosks(user.role);
+  const control = can.controlKiosks(user.role);
+  const [q, setQ] = useState("");
+  const dq = useDebounced(q.trim().toLowerCase(), 200);
+  const [filter, setFilter] = useState<"all" | "online" | "offline" | "attention">("all");
+  const [open, setOpen] = useState<string | null>(null);
   const tele = useLoad(() => portal.terminals(), [], 30_000);
   const reg = useLoad(() => portal.registry(), [], 30_000);
   const branches = useLoad(() => portal.reference().then((r) => r.branches), []);
@@ -53,6 +58,14 @@ export function Fleet() {
     return (tele.data ?? []).map((t) => ({ t, r: byCode.get(t.terminalCode) }));
   }, [tele.data, reg.data]);
   const retired = useMemo(() => (reg.data ?? []).filter((r) => r.status === "RETIRED"), [reg.data]);
+  const shown = useMemo(() => merged.filter(({ t, r }) => {
+    if (filter === "online" && !t.online) return false;
+    if (filter === "offline" && t.online) return false;
+    if (filter === "attention" && !needsAttention(t, r)) return false;
+    if (!dq) return true;
+    return [t.terminalCode, t.branchCode, r?.branchName, r?.name, r?.location].some((s) => s?.toLowerCase().includes(dq));
+  }), [merged, filter, dq]);
+  const paged = useClientPage(shown, "fleet", [filter, dq]);
 
   async function command(code: string, cmd: TerminalCommand) {
     if (cmd === "REBOOT" && !await confirm({ title: `Reboot ${code}?`, confirmLabel: "Reboot kiosk", tone: "warn",
@@ -103,6 +116,16 @@ export function Fleet() {
 
   const online = merged.filter((m) => m.t.online).length;
   const alarms = merged.reduce((n, m) => n + m.t.alarms.length, 0);
+  const openRow = merged.find((m) => m.t.terminalCode === open);
+
+  const adminMenu = (r: TerminalRow) => (<>
+    <button type="button" onClick={() => setEditing(r)}><IconEdit /> Edit details</button>
+    <button type="button" onClick={() => rotate(r)}><IconKey /> Replace token</button>
+    {r.status === "ACTIVE"
+      ? <button type="button" onClick={() => setStatus(r, "DISABLED")}><IconPause /> Disable</button>
+      : <button type="button" onClick={() => setStatus(r, "ACTIVE")}><IconCheck /> Enable</button>}
+    <button type="button" className="is-danger" onClick={() => remove(r)}><IconTrash /> Remove</button>
+  </>);
 
   return (
     <div className="stack">
@@ -115,23 +138,80 @@ export function Fleet() {
         {admin && <Button icon={<IconPlus />} onClick={() => setCreating(true)}>Add kiosk</Button>}
       </div>
 
-      {merged.length === 0 ? (
-        <Card><Empty icon={<IconMonitor />} title="No kiosks yet">{admin ? "Add the first kiosk with the button above. You get its terminal token to enter on the machine." : "An administrator adds kiosks here."}</Empty></Card>
-      ) : (
-        <div className="fleet">
-          {merged.map(({ t, r }) => <KioskCard key={t.terminalCode} t={t} r={r} onCommand={command}
-            menu={admin && r ? (
-              <RowMenu label="Manage">
-                <button type="button" onClick={() => setEditing(r)}><IconEdit /> Edit details</button>
-                <button type="button" onClick={() => rotate(r)}><IconKey /> Replace token</button>
-                {r.status === "ACTIVE"
-                  ? <button type="button" onClick={() => setStatus(r, "DISABLED")}><IconPause /> Disable</button>
-                  : <button type="button" onClick={() => setStatus(r, "ACTIVE")}><IconCheck /> Enable</button>}
-                <button type="button" className="is-danger" onClick={() => remove(r)}><IconTrash /> Remove</button>
-              </RowMenu>
-            ) : null} />)}
-        </div>
-      )}
+      <Card pad={false} title="Kiosks" subtitle="Click a kiosk for its modules, services and cash"
+            actions={<div className="toolbar toolbar--wrap">
+              <label className="search"><IconSearch /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Kiosk, branch, location…" /></label>
+              <Segmented value={filter} onChange={setFilter} options={[
+                { value: "all", label: "All", count: merged.length },
+                { value: "online", label: "Online", count: online },
+                { value: "offline", label: "Offline", count: merged.length - online },
+                { value: "attention", label: "Needs attention", count: merged.filter((m) => needsAttention(m.t, m.r)).length },
+              ]} />
+            </div>}>
+        {merged.length === 0 ? (
+          <Empty icon={<IconMonitor />} title="No kiosks yet">{admin ? "Add the first kiosk with the button above. You get its terminal token to enter on the machine." : "An administrator adds kiosks here."}</Empty>
+        ) : shown.length === 0 ? <Empty icon={<IconMonitor />} title="No kiosks match" /> : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Kiosk</th><th>Connection</th><th>Service</th><th>Health</th><th className="num">Blank cards</th><th>Cash held</th><th className="num">Sessions today</th><th /></tr></thead>
+              <tbody>
+                {paged.rows.map(({ t, r }) => {
+                  const locked = t.serviceMode === "LOCKED";
+                  const disabled = r != null && r.status !== "ACTIVE";
+                  const servicesOff = Object.keys(SERVICE_LABEL).filter((s) => t.disabledServices.includes(s)).length;
+                  const cash = cashTotals(t.cassetteCounts);
+                  return (
+                    <tr key={t.terminalCode} className={`clickable ${disabled || (t.online && t.alarms.length) ? "is-red" : ""}`} onClick={() => setOpen(t.terminalCode)}>
+                      <td><div className="cell-main"><span><b><Mono>{t.terminalCode}</Mono></b>
+                        <small>{r?.name ? `${r.name} · ` : ""}{r?.branchName ?? t.branchCode}{r?.location ? ` · ${r.location}` : ""}</small></span></div></td>
+                      <td>
+                        <span className={`conn ${t.online ? "is-on" : ""}`}><span className="dot" />{t.online ? "Online" : "Offline"}</span>
+                        <small className="muted"><br />{t.lastSeen ? `heard ${fmt.ago(t.lastSeen)}` : "never connected"}</small>
+                      </td>
+                      <td>
+                        {disabled ? <Badge tone="bad">Disabled</Badge> : <Badge tone={locked ? "bad" : "good"}>{locked ? "Locked" : "In service"}</Badge>}
+                        {!disabled && !locked && servicesOff > 0 && <small className="muted"><br />{fmt.plural(servicesOff, "service")} off</small>}
+                      </td>
+                      <td>
+                        {!t.healthReportedAt ? <Badge tone="warn">Not reported</Badge>
+                          : t.alarms.length ? <Badge tone="warn">{fmt.plural(t.alarms.length, "alarm")}</Badge>
+                          : <Badge tone="good">All OK</Badge>}
+                        {t.healthReportedAt && <small className="muted"><br />report {fmt.ago(t.healthReportedAt)}</small>}
+                      </td>
+                      <td className={`num ${t.cardStock != null && t.cardStock < LOW_STOCK ? "dir-dr" : ""}`}>{t.cardStock ?? "—"}</td>
+                      <td className="small nowrap">{cash.length ? cash.map((c) => <div key={c.currency}>{fmt.money(c.value, c.currency)}</div>) : <span className="muted">—</span>}</td>
+                      <td className="num">{r?.sessionsToday ?? "—"}<small className="muted"><br />{r ? `${fmt.num(r.sessionsTotal)} in all` : ""}</small></td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <div className="row-actions">
+                          {control && !disabled && (locked
+                            ? <Button size="sm" kind="success" icon={<IconUnlock />} onClick={() => command(t.terminalCode, "UNLOCK")}>Unlock</Button>
+                            : <Button size="sm" kind="secondary" icon={<IconLock />} onClick={() => command(t.terminalCode, "LOCK")}>Lock</Button>)}
+                          {(control || (admin && r)) && (
+                            <RowMenu label="More…">
+                              {control && <button type="button" disabled={!t.commandChannel} onClick={() => command(t.terminalCode, "REFRESH_CONFIG")}
+                                                  title={t.commandChannel ? "" : "Needs the kiosk’s remote-command connection"}><IconRefresh /> Refresh settings</button>}
+                              {control && <button type="button" disabled={!t.commandChannel} onClick={() => command(t.terminalCode, "REBOOT")}
+                                                  title={t.commandChannel ? "" : "Needs the kiosk’s remote-command connection"}><IconPower /> Reboot</button>}
+                              {admin && r && adminMenu(r)}
+                            </RowMenu>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <Pager data={paged.data} onPage={paged.setPage} onSize={paged.setSize} />
+      </Card>
+
+      <Drawer open={!!openRow} onClose={() => setOpen(null)} title={openRow?.t.terminalCode ?? ""}
+              subtitle={openRow ? <span className="muted">{openRow.r?.name ? `${openRow.r.name} · ` : ""}{openRow.r?.branchName ?? openRow.t.branchCode}</span> : null}>
+        {openRow && <KioskCard t={openRow.t} r={openRow.r} onCommand={command}
+                               menu={admin && openRow.r ? <RowMenu label="Manage">{adminMenu(openRow.r)}</RowMenu> : null} />}
+      </Drawer>
 
       {admin && retired.length > 0 && (
         <Card pad={false} title="Removed kiosks" subtitle="They cannot connect. Their sessions, cash records and audit entries are kept.">
@@ -163,6 +243,22 @@ export function Fleet() {
       <TokenModal issued={issued} onClose={() => setIssued(null)} />
     </div>
   );
+}
+
+/** Offline, locked, disabled, alarms, low card stock, or never sent a health report. */
+function needsAttention(t: TerminalView, r?: TerminalRow) {
+  return !t.online || t.serviceMode === "LOCKED" || (r != null && r.status !== "ACTIVE") || t.alarms.length > 0
+    || !t.healthReportedAt || (t.cardStock != null && t.cardStock < LOW_STOCK);
+}
+
+/** "KES 1000": 800 notes … → value held per currency. */
+function cashTotals(cassettes: Record<string, number> | null | undefined) {
+  const m = new Map<string, number>();
+  for (const [k, n] of Object.entries(cassettes ?? {})) {
+    const [cur, denom] = k.split(" ");
+    m.set(cur, (m.get(cur) ?? 0) + Number(denom) * n);
+  }
+  return [...m].filter(([, v]) => v > 0).map(([currency, value]) => ({ currency, value }));
 }
 
 const NEW_BRANCH = "__new__";
@@ -303,8 +399,13 @@ function KioskCard({ t, r, onCommand, menu }: {
         {disabled ? <Badge tone="bad">Disabled</Badge>
           : <Badge value={t.serviceMode} tone={locked ? "bad" : "good"}>{locked ? "Locked" : "In service"}</Badge>}
         {t.softwareVersion && <Mono>v{t.softwareVersion}</Mono>}
-        <span className="muted small">seen {fmt.ago(t.lastSeen)}</span>
+        <span className="muted small">{t.lastSeen ? `heard from ${fmt.ago(t.lastSeen)}` : "never connected"}</span>
       </div>
+      {!t.healthReportedAt && (
+        <div className="callout callout--warn"><IconAlert /><div><b>No health report yet</b>
+          <span>The kiosk app has not sent its health report (D-6, <Mono>POST /stm/v1/devices/{t.terminalCode}/health</Mono>, every 60 s), so its modules, card stock and alarms are unknown here.
+            {t.lastContactAt ? " It is connecting, so the report is the only thing missing." : ""}</span></div></div>
+      )}
 
       {modules.length > 0 && (
         <div className="modules">
@@ -356,10 +457,10 @@ function KioskCard({ t, r, onCommand, menu }: {
         {control && !disabled && (locked
           ? <Button size="sm" kind="success" icon={<IconUnlock />} onClick={() => onCommand(t.terminalCode, "UNLOCK")}>Unlock</Button>
           : <Button size="sm" kind="secondary" icon={<IconLock />} onClick={() => onCommand(t.terminalCode, "LOCK")}>Lock</Button>)}
-        {control && <Button size="sm" kind="ghost" icon={<IconRefresh />} disabled={!t.online} onClick={() => onCommand(t.terminalCode, "REFRESH_CONFIG")}
-                title={t.online ? "Reload configuration" : "Needs the kiosk to be online"}>Refresh</Button>}
-        {control && <Button size="sm" kind="ghost" icon={<IconPower />} disabled={!t.online} onClick={() => onCommand(t.terminalCode, "REBOOT")}
-                title={t.online ? "Restart the kiosk" : "Needs the kiosk to be online"}>Reboot</Button>}
+        {control && <Button size="sm" kind="ghost" icon={<IconRefresh />} disabled={!t.commandChannel} onClick={() => onCommand(t.terminalCode, "REFRESH_CONFIG")}
+                title={t.commandChannel ? "Reload configuration" : "Needs the kiosk’s remote-command connection"}>Refresh</Button>}
+        {control && <Button size="sm" kind="ghost" icon={<IconPower />} disabled={!t.commandChannel} onClick={() => onCommand(t.terminalCode, "REBOOT")}
+                title={t.commandChannel ? "Restart the kiosk" : "Needs the kiosk’s remote-command connection"}>Reboot</Button>}
         <Mono>{t.branchCode}</Mono>
       </footer>
     </article>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { usePortal } from "../context";
 import { can } from "../auth";
-import { Badge, Card, ErrorNote, fmt, Mono, Spinner, useLoad } from "../ui/kit";
+import { Badge, Card, ErrorNote, fmt, Mono, Pager, Spinner, useClientPage, useDebounced, useLoad } from "../ui/kit";
 import { IconAlert, IconSearch } from "../ui/Icons";
 
 /** The simulated core banking, registry, card system and SMS gateway used in the demo profile. */
@@ -9,8 +9,12 @@ export function Simulator() {
   const { portal, user, toast } = usePortal();
   const sim = useLoad(() => portal.simulator(), []);
   const [q, setQ] = useState("");
-  const customers = useLoad(() => portal.simCustomers(q.trim() || undefined), [q]);
+  const dq = useDebounced(q.trim());
+  const customers = useLoad(() => portal.simCustomers(dq || undefined), [dq]);
   const gl = useLoad(() => portal.simGl(), [], 15_000);
+  const custPage = useClientPage(customers.data, "sim-customers", [dq], 10);
+  const idPage = useClientPage(sim.data?.identities ?? null, "sim-identities", [], 10);
+  const glPage = useClientPage(gl.data, "sim-gl", [], 10);
   const [account, setAccount] = useState<string | null>(null);
   const edit = can.configure(user.role);
 
@@ -34,7 +38,7 @@ export function Simulator() {
         <div><b>Demo back ends</b><span>Simulated adapters stand in for core banking, IPRS/KRA, the card system and the SMS gateway. They are off in the prod profile.</span></div>
       </div>
 
-      <div className="grid-3">
+      <div className="grid-2">
         <Card title="Switches">
           <div className="stack stack--sm">
             <label className="switch"><input type="checkbox" checked={s.coreDown} disabled={!edit} onChange={(e) => set({ coreDown: e.target.checked })} />Core banking down</label>
@@ -50,24 +54,32 @@ export function Simulator() {
             </div>
           </div>
         </Card>
-        <Card title="Paybills" subtitle="Deposit targets other than own accounts">
-          <ul className="recs">{s.paybills.map((p) => <li key={p.paybill}><div><b>{p.name}</b></div><Mono>{p.paybill}</Mono></li>)}</ul>
-        </Card>
-        <Card title="Cash GLs" subtitle="Balance per kiosk and currency">
-          {!gl.data ? <Spinner /> : (
-            <ul className="recs">{gl.data.map((g) => (
-              <li key={g.gl}><div><Mono>{g.gl}</Mono><span className="muted small">{fmt.plural(g.postings, "posting")}</span></div><b>{fmt.money(g.balance, g.currency)}</b></li>
-            ))}</ul>
-          )}
+        <Card pad={false} title="Paybills" subtitle="Deposit targets other than own accounts">
+          <table className="table table--dense">
+            <thead><tr><th>Paybill</th><th>Name</th></tr></thead>
+            <tbody>{s.paybills.map((p) => <tr key={p.paybill}><td><Mono>{p.paybill}</Mono></td><td>{p.name}</td></tr>)}</tbody>
+          </table>
         </Card>
       </div>
+
+      <Card pad={false} title="Cash and fee GLs" subtitle="The bank’s own ledger accounts: cash per kiosk and currency, fees, forex position">
+        {!gl.data ? <div className="card__body"><Spinner /></div> : (
+          <table className="table table--dense">
+            <thead><tr><th>Account</th><th className="num">Postings</th><th className="num">Balance</th></tr></thead>
+            <tbody>{glPage.rows.map((g) => (
+              <tr key={g.gl}><td><Mono>{g.gl}</Mono></td><td className="num">{fmt.num(g.postings)}</td><td className="num"><b>{fmt.money(g.balance, g.currency)}</b></td></tr>
+            ))}</tbody>
+          </table>
+        )}
+        <Pager data={glPage.data} onPage={glPage.setPage} onSize={glPage.setSize} />
+      </Card>
 
       <Card pad={false} title="Test identities" subtitle="Scan these ID numbers at the kiosk to walk each path of the journey">
         <div className="table-wrap">
           <table className="table table--dense">
             <thead><tr><th>Document</th><th>Name</th><th>Born</th><th>KRA</th><th>Scenario</th><th>What happens</th></tr></thead>
             <tbody>
-              {s.identities.map((i) => (
+              {idPage.rows.map((i) => (
                 <tr key={i.documentNumber}>
                   <td><Mono>{i.documentNumber}</Mono><small className="muted"><br />{fmt.words(i.documentType)} · {i.country}</small></td>
                   <td><b>{i.givenNames} {i.surname}</b></td>
@@ -80,6 +92,7 @@ export function Simulator() {
             </tbody>
           </table>
         </div>
+        <Pager data={idPage.data} onPage={idPage.setPage} onSize={idPage.setSize} />
       </Card>
 
       <Card pad={false} title="Core banking customers"
@@ -89,7 +102,7 @@ export function Simulator() {
             <table className="table table--dense">
               <thead><tr><th>Customer</th><th>Mobile</th><th>Accounts</th><th>Cards</th></tr></thead>
               <tbody>
-                {customers.data.map((c) => (
+                {custPage.rows.map((c) => (
                   <tr key={c.id}>
                     <td><b>{c.fullName}</b><small className="muted"><br /><Mono>{c.id}</Mono> · ID {c.idNumber}
                       <br />{c.fingersEnrolled ? fmt.plural(c.fingersEnrolled, "fingerprint") : "no fingerprints"} · {c.signatureSource ? "signature on file" : "no signature"}</small></td>
@@ -105,6 +118,7 @@ export function Simulator() {
             </table>
           </div>
         )}
+        <Pager data={custPage.data} onPage={custPage.setPage} onSize={custPage.setSize} />
       </Card>
       {account && <AccountPostings id={account} onClose={() => setAccount(null)} />}
     </div>
@@ -114,13 +128,14 @@ export function Simulator() {
 function AccountPostings({ id, onClose }: { id: string; onClose: () => void }) {
   const { portal } = usePortal();
   const p = useLoad(() => portal.simPostings(id), [id]);
+  const pg = useClientPage(p.data, "sim-postings", [id]);
   return (
     <Card pad={false} title={<>Postings on <Mono>{id}</Mono></>} actions={<button type="button" className="link" onClick={onClose}>Close</button>}>
       {!p.data ? <div className="card__body"><Spinner /></div> : (
         <table className="table table--dense">
           <thead><tr><th>When</th><th>FT</th><th>Narrative</th><th className="num">Amount</th><th className="num">Balance after</th></tr></thead>
           <tbody>
-            {p.data.map((x) => (
+            {pg.rows.map((x) => (
               <tr key={x.id}>
                 <td className="muted">{fmt.dateTime(x.postedAt)}</td>
                 <td><Mono>{x.coreRef}</Mono></td>
@@ -132,6 +147,7 @@ function AccountPostings({ id, onClose }: { id: string; onClose: () => void }) {
           </tbody>
         </table>
       )}
+      <Pager data={pg.data} onPage={pg.setPage} onSize={pg.setSize} />
     </Card>
   );
 }

@@ -331,6 +331,20 @@ export function usePaging(key: string, resetOn: unknown[], defaultSize = 25) {
 }
 
 /** The text after it stops changing for `ms` (for search boxes that query the server). */
+/** One page of a list that is already in the browser, in the shape Pager takes. */
+export function pageOf<T>(all: T[], page: number, size: number): Page<T> {
+  const pages = Math.max(1, Math.ceil(all.length / size));
+  const p = Math.min(Math.max(1, page), pages);
+  return { items: all.slice((p - 1) * size, p * size), total: all.length, page: p, size, pages };
+}
+
+/** Paging for a list the browser already holds (a few hundred rows at most): same Pager, remembered page size. */
+export function useClientPage<T>(all: T[] | null | undefined, key: string, resetOn: unknown[] = [], defaultSize = 25) {
+  const p = usePaging(key, resetOn, defaultSize);
+  const data = all ? pageOf(all, p.page, p.size) : null;
+  return { data, rows: data?.items ?? [], setPage: p.setPage, setSize: p.setSize };
+}
+
 export function useDebounced<T>(value: T, ms = 350) {
   const [v, setV] = useState(value);
   useEffect(() => { const t = setTimeout(() => setV(value), ms); return () => clearTimeout(t); }, [value, ms]);

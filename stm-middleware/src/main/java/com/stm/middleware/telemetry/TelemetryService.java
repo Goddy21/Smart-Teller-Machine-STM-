@@ -3,6 +3,8 @@ package com.stm.middleware.telemetry;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.stm.middleware.signaling.SignalingHandler;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -23,36 +25,49 @@ public class TelemetryService {
     public record TerminalView(String terminalCode, String branchCode, String status, Map<String, Integer> cassetteCounts,
                                Integer cardStock, List<String> alarms, OffsetDateTime lastSeen, boolean online,
                                Map<String, Object> modules, List<String> disabledServices, String serviceMode,
-                               String softwareVersion) {}
+                               String softwareVersion, OffsetDateTime healthReportedAt, OffsetDateTime lastContactAt,
+                               boolean commandChannel) {}
+
+    /** Heard from neither by a health report nor by any other call for this long = offline. */
+    public static final int OFFLINE_AFTER_SEC = 180;
 
     private final JdbcClient jdbc;
     private final ObjectMapper mapper;
+    private final SignalingHandler signaling;
     private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
 
-    public TelemetryService(JdbcClient jdbc, ObjectMapper mapper) {
+    public TelemetryService(JdbcClient jdbc, ObjectMapper mapper, @Lazy SignalingHandler signaling) {
         this.jdbc = jdbc;
         this.mapper = mapper;
+        this.signaling = signaling;
     }
 
+    /**
+     * Online = heard from in the last 3 minutes: a D-6 health report (every 60 s), any other gateway call or sign-in,
+     * or an open remote-command WebSocket. lastSeen is the latest of those.
+     */
     public List<TerminalView> list() {
-        // Kiosks report every 60 s; three missed reports = offline.
-        OffsetDateTime cutoff = OffsetDateTime.now().minusSeconds(180);
+        OffsetDateTime cutoff = OffsetDateTime.now().minusSeconds(OFFLINE_AFTER_SEC);
         return jdbc.sql("""
-                SELECT t.id, t.terminal_code, t.branch_code, t.service_mode, t.software_version,
-                       x.status, x.card_stock, x.alarms, x.last_seen, x.modules, x.disabled_services
+                SELECT t.id, t.terminal_code, t.branch_code, t.service_mode, t.software_version, t.last_contact_at,
+                       x.status, x.card_stock, x.alarms, x.last_seen, x.reported_at, x.modules, x.disabled_services
                 FROM terminals t LEFT JOIN terminal_telemetry x ON x.terminal_id = t.id
                 WHERE t.status <> 'RETIRED'
                 ORDER BY t.terminal_code""")
                 .query((rs, n) -> {
-                    OffsetDateTime seen = rs.getObject("last_seen", OffsetDateTime.class);
+                    OffsetDateTime health = rs.getObject("last_seen", OffsetDateTime.class);
+                    OffsetDateTime contact = rs.getObject("last_contact_at", OffsetDateTime.class);
+                    OffsetDateTime seen = health == null ? contact : contact == null || health.isAfter(contact) ? health : contact;
+                    boolean ws = signaling.kioskConnected(rs.getString("terminal_code"));
                     return new TerminalView(rs.getString("terminal_code"), rs.getString("branch_code"),
                             rs.getString("status"), cassettes(rs.getLong("id")),
                             rs.getObject("card_stock", Integer.class),
                             parse(rs.getString("alarms"), new TypeReference<List<String>>() {}, List.of()),
-                            seen, seen != null && seen.isAfter(cutoff),
+                            seen, ws || (seen != null && seen.isAfter(cutoff)),
                             parse(rs.getString("modules"), new TypeReference<Map<String, Object>>() {}, Map.of()),
                             parse(rs.getString("disabled_services"), new TypeReference<List<String>>() {}, List.of()),
-                            rs.getString("service_mode"), rs.getString("software_version"));
+                            rs.getString("service_mode"), rs.getString("software_version"),
+                            rs.getObject("reported_at", OffsetDateTime.class), contact, ws);
                 }).list();
     }
 

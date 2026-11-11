@@ -1,6 +1,7 @@
 package com.stm.middleware.stm.core;
 
 import com.stm.middleware.common.Hashing;
+import com.stm.middleware.telemetry.DeviceContact;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -14,9 +15,11 @@ public class DeviceTokenService {
     public static final int LIFETIME_SEC = 900;
 
     private final JdbcClient jdbc;
+    private final DeviceContact contact;
 
-    public DeviceTokenService(JdbcClient jdbc) {
+    public DeviceTokenService(JdbcClient jdbc, DeviceContact contact) {
         this.jdbc = jdbc;
+        this.contact = contact;
     }
 
     public record Issued(String accessToken, int expiresIn) {}
@@ -26,6 +29,8 @@ public class DeviceTokenService {
         jdbc.sql("INSERT INTO device_tokens (token_hash, terminal_id, expires_at) VALUES (:h, :t, :e)")
                 .param("h", Hashing.sha256Hex(token)).param("t", terminalId)
                 .param("e", OffsetDateTime.now().plusSeconds(LIFETIME_SEC)).update();
+        jdbc.sql("SELECT terminal_code FROM terminals WHERE id = :i").param("i", terminalId).query(String.class).optional()
+                .ifPresent(code -> contact.seen(terminalId, code));
         return new Issued(token, LIFETIME_SEC);
     }
 
@@ -35,7 +40,8 @@ public class DeviceTokenService {
                 WHERE d.token_hash = :h AND d.expires_at > now() AND t.status = 'ACTIVE'""")
                 .param("h", Hashing.sha256Hex(token))
                 .query((rs, n) -> new DevicePrincipal(rs.getLong(1), rs.getString(2), rs.getString(3)))
-                .optional();
+                .optional()
+                .map(p -> { contact.seen(p.terminalId(), p.deviceId()); return p; });
     }
 
     /** The provisioning credential from POST /api/v1/terminals/register (dev sign-in when mTLS is off). */

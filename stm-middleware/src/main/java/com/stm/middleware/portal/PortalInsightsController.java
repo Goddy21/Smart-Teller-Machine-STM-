@@ -63,8 +63,8 @@ public class PortalInsightsController {
                     AS cash_stuck,
                   (SELECT count(*) FROM cash_positions WHERE NOT reconciled AND created_at > now() - interval '7 days') AS cash_variances,
                   (SELECT count(*) FROM terminals WHERE status = 'ACTIVE') AS terminals,
-                  (SELECT count(*) FROM terminal_telemetry x JOIN terminals t ON t.id = x.terminal_id
-                    WHERE t.status = 'ACTIVE' AND x.last_seen > now() - interval '180 seconds') AS terminals_online,
+                  (SELECT count(*) FROM terminals t LEFT JOIN terminal_telemetry x ON x.terminal_id = t.id
+                    WHERE t.status = 'ACTIVE' AND greatest(x.last_seen, t.last_contact_at) > now() - interval '180 seconds') AS terminals_online,
                   (SELECT count(*) FROM terminals WHERE status = 'ACTIVE' AND service_mode = 'LOCKED') AS terminals_locked,
                   (SELECT count(*) FROM teller_calls WHERE created_at >= date_trunc('day', now())) AS teller_calls_today,
                   (SELECT count(*) FROM sms_messages WHERE created_at >= date_trunc('day', now())) AS sms_today,
@@ -224,17 +224,32 @@ public class PortalInsightsController {
     // ------------------------------------------------------------------ audit journal
 
     /** Newest first. Filter by entity (a session id, terminal code, currency ...) or event type; page with ?beforeSeq=. */
+    /**
+     * The audit journal, newest first. Filters: entityId (exact), eventType, terminal (kiosk code), from / to (dates,
+     * yyyy-mm-dd, both inclusive, East Africa Time). ?page= gives a page {items,total,page,size,pages}; without it the
+     * older cursor form (beforeSeq + limit) returns a plain list.
+     */
     @GetMapping("/audit/journal")
-    public List<Map<String, Object>> journal(@RequestParam(required = false) String entityId,
-                                             @RequestParam(required = false) String eventType,
-                                             @RequestParam(required = false) Long beforeSeq,
-                                             @RequestParam(defaultValue = "100") int limit) {
-        StringBuilder sql = new StringBuilder("""
-                SELECT a.seq, a.event_type, a.entity_id, t.terminal_code, a.payload, a.prev_hash, a.hash, a.created_at
-                FROM audit_journal a LEFT JOIN terminals t ON t.id = a.terminal_id WHERE 1 = 1""");
+    public Object journal(@RequestParam(required = false) String entityId,
+                          @RequestParam(required = false) String eventType,
+                          @RequestParam(required = false) String terminal,
+                          @RequestParam(required = false) java.time.LocalDate from,
+                          @RequestParam(required = false) java.time.LocalDate to,
+                          @RequestParam(required = false) Long beforeSeq,
+                          @RequestParam(required = false) Integer page,
+                          @RequestParam(defaultValue = "50") int size,
+                          @RequestParam(defaultValue = "100") int limit) {
+        StringBuilder where = new StringBuilder(" FROM audit_journal a LEFT JOIN terminals t ON t.id = a.terminal_id WHERE 1 = 1");
         Map<String, Object> p = new HashMap<>();
-        if (entityId != null && !entityId.isBlank()) { sql.append(" AND a.entity_id = :e"); p.put("e", entityId.trim()); }
-        if (eventType != null && !eventType.isBlank()) { sql.append(" AND a.event_type = :t"); p.put("t", eventType.trim()); }
+        if (entityId != null && !entityId.isBlank()) { where.append(" AND a.entity_id = :e"); p.put("e", entityId.trim()); }
+        if (eventType != null && !eventType.isBlank()) { where.append(" AND a.event_type = :t"); p.put("t", eventType.trim()); }
+        if (terminal != null && !terminal.isBlank()) { where.append(" AND t.terminal_code = :k"); p.put("k", terminal.trim()); }
+        if (from != null) { where.append(" AND a.created_at >= (CAST(:f AS date) + time '00:00') AT TIME ZONE 'Africa/Nairobi'"); p.put("f", from); }
+        if (to != null) { where.append(" AND a.created_at < (CAST(:u AS date) + 1 + time '00:00') AT TIME ZONE 'Africa/Nairobi'"); p.put("u", to); }
+        String select = "SELECT a.seq, a.event_type, a.entity_id, t.terminal_code, a.payload, a.prev_hash, a.hash, a.created_at"
+                + where + " ORDER BY a.seq DESC";
+        if (page != null) return rows.page("SELECT count(*)" + where, select, p, page, size);
+        StringBuilder sql = new StringBuilder(select.replace(" ORDER BY a.seq DESC", ""));
         if (beforeSeq != null) { sql.append(" AND a.seq < :b"); p.put("b", beforeSeq); }
         sql.append(" ORDER BY a.seq DESC LIMIT :l");
         p.put("l", Math.max(1, Math.min(limit, 500)));

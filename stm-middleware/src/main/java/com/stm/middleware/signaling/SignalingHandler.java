@@ -91,6 +91,12 @@ public class SignalingHandler extends TextWebSocketHandler {
         broadcastQueuePositions();
     }
 
+    /** True while the kiosk holds its remote-command WebSocket open. */
+    public boolean kioskConnected(String terminalCode) {
+        String sid = kioskSessionByCode.get(terminalCode);
+        return sid != null && sessions.containsKey(sid);
+    }
+
     /** Remote commands to a kiosk (REBOOT, LOCK, UNLOCK, REFRESH_CONFIG). */
     public boolean sendCommand(String terminalCode, String command) {
         return push(terminalCode, "COMMAND", Map.of("command", command));

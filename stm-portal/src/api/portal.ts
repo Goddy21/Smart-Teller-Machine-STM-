@@ -166,6 +166,12 @@ export interface TerminalView {
   disabledServices: string[];
   serviceMode: "IN_SERVICE" | "LOCKED";
   softwareVersion: string | null;
+  /** Last D-6 health report; null = the kiosk app has never sent one (modules, card stock and alarms are then unknown). */
+  healthReportedAt: string | null;
+  /** Last call to the gateway of any kind (sign-in, a customer session …). */
+  lastContactAt: string | null;
+  /** The remote-command WebSocket is open (Lock, Reboot … reach the kiosk at once). */
+  commandChannel: boolean;
 }
 
 export interface TerminalRow {
@@ -414,6 +420,10 @@ export class PortalApi {
   verifyAudit() { return this.get<VerifyResult>("/audit/verify"); }
   journal(q: { entityId?: string; eventType?: string; beforeSeq?: number; limit?: number }) {
     return this.get<JournalEntry[]>("/audit/journal", q);
+  }
+  /** from / to: yyyy-mm-dd, both inclusive (East Africa Time). */
+  journalPage(q: { entityId?: string; eventType?: string; terminal?: string; from?: string; to?: string; page: number; size: number }) {
+    return this.get<Page<JournalEntry>>("/audit/journal", q);
   }
   eventTypes() { return this.get<string[]>("/audit/event-types"); }
 

@@ -1,6 +1,5 @@
-import { Fragment, useEffect, useState, type FormEvent } from "react";
+import { Fragment, useState, type FormEvent } from "react";
 import { usePortal } from "../context";
-import type { JournalEntry } from "../api/portal";
 import type { Recording, TransactionEvidence } from "../api/calls";
 import { Badge, Button, Card, Empty, ErrorNote, fmt, Mono, Pager, Segmented, Spinner, useDebounced, useLoad, usePaging } from "../ui/kit";
 import { IconChevronRight, IconDownload, IconSearch, IconShield, IconVideo } from "../ui/Icons";
@@ -47,79 +46,89 @@ function ChainStatus() {
 function Journal({ initialEntity }: { initialEntity?: string }) {
   const { portal, openSession } = usePortal();
   const [entity, setEntity] = useState(initialEntity ?? "");
-  const [type, setType] = useState("");
-  const [query, setQuery] = useState({ entity: initialEntity ?? "", type: "" });
-  const [rows, setRows] = useState<JournalEntry[]>([]);
-  const [more, setMore] = useState(true);
+  const [query, setQuery] = useState({ entity: initialEntity ?? "", type: "", terminal: "", from: "", to: "" });
   const [open, setOpen] = useState<number | null>(null);
   const types = useLoad(() => portal.eventTypes(), []);
-  const first = useLoad(() => portal.journal({ entityId: query.entity, eventType: query.type, limit: 50 }), [query.entity, query.type]);
+  const kiosks = useLoad(() => portal.registry(), []);
+  const paging = usePaging("audit-journal", [query], 50);
+  const j = useLoad(() => portal.journalPage({
+    entityId: query.entity || undefined, eventType: query.type || undefined, terminal: query.terminal || undefined,
+    from: query.from || undefined, to: query.to || undefined, page: paging.page, size: paging.size,
+  }), [query, paging.page, paging.size]);
+  const rows = j.data?.items ?? [];
 
-  useEffect(() => { if (first.data) { setRows(first.data); setMore(first.data.length === 50); } }, [first.data]);
-
-  async function loadMore() {
-    const last = rows[rows.length - 1];
-    if (!last) return;
-    const next = await portal.journal({ entityId: query.entity, eventType: query.type, beforeSeq: last.seq, limit: 50 });
-    setRows((r) => [...r, ...next]);
-    setMore(next.length === 50);
-  }
-  const submit = (e: FormEvent) => { e.preventDefault(); setQuery({ entity: entity.trim(), type }); };
+  const set = (patch: Partial<typeof query>) => { setOpen(null); setQuery((q) => ({ ...q, ...patch })); };
+  const submit = (e: FormEvent) => { e.preventDefault(); set({ entity: entity.trim() }); };
+  const filtered = !!(query.entity || query.type || query.terminal || query.from || query.to);
+  const today = new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);   // East Africa Time
+  const badRange = !!(query.from && query.to && query.from > query.to);
 
   return (
     <Card pad={false} title="Audit journal" subtitle="Append-only. Identifiers are masked; PINs and fingerprints are never written here."
           actions={
-            <form className="toolbar" onSubmit={submit}>
-              <label className="search"><IconSearch /><input value={entity} onChange={(e) => setEntity(e.target.value)} placeholder="Session or transaction ID" /></label>
-              <select className="select" value={type} onChange={(e) => { setType(e.target.value); setQuery({ entity: entity.trim(), type: e.target.value }); }}>
+            <form className="toolbar toolbar--wrap" onSubmit={submit}>
+              <label className="search"><IconSearch /><input value={entity} onChange={(e) => setEntity(e.target.value)} onBlur={() => entity.trim() !== query.entity && set({ entity: entity.trim() })}
+                                                             placeholder="Session or transaction ID" /></label>
+              <select className="select" value={query.type} onChange={(e) => set({ type: e.target.value })} aria-label="Event">
                 <option value="">All events</option>
                 {(types.data ?? []).map((t) => <option key={t} value={t}>{fmt.words(t)}</option>)}
               </select>
-              <Button kind="secondary" type="submit">Filter</Button>
+              <select className="select" value={query.terminal} onChange={(e) => set({ terminal: e.target.value })} aria-label="Kiosk">
+                <option value="">All kiosks</option>
+                {(kiosks.data ?? []).map((k) => <option key={k.terminalCode} value={k.terminalCode}>{k.terminalCode}</option>)}
+              </select>
+              <label className="date-range" title="Dates are East Africa Time; both days are included">
+                <span>From</span><input type="date" className="input" value={query.from} max={query.to || today} onChange={(e) => set({ from: e.target.value })} />
+                <span>to</span><input type="date" className="input" value={query.to} min={query.from || undefined} max={today} onChange={(e) => set({ to: e.target.value })} />
+              </label>
+              <Button kind="ghost" size="sm" disabled={query.from === today && query.to === today} onClick={() => set({ from: today, to: today })}>Today</Button>
+              {filtered && <Button kind="ghost" size="sm" onClick={() => { setEntity(""); set({ entity: "", type: "", terminal: "", from: "", to: "" }); }}>Clear filters</Button>}
             </form>
           }>
-      {first.error && !first.data ? <div className="card__body"><ErrorNote error={first.error} onRetry={first.reload} /></div>
-        : !first.data ? <div className="card__body"><Spinner /></div>
-        : rows.length === 0 ? <Empty icon={<IconShield />} title="No entries match" />
+      {badRange ? <Empty icon={<IconShield />} title="The start date is after the end date" />
+        : j.error && !j.data ? <div className="card__body"><ErrorNote error={j.error} onRetry={j.reload} /></div>
+        : !j.data ? <div className="card__body"><Spinner /></div>
+        : rows.length === 0 ? <Empty icon={<IconShield />} title={filtered ? "No entries match" : "The journal is empty"} />
         : (
-          <>
-            <div className="table-wrap">
-              <table className="table table--dense">
-                <thead><tr><th /><th>#</th><th>Event</th><th>Entity</th><th>Kiosk</th><th>Hash</th><th>When</th></tr></thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <Fragment key={r.seq}>
-                      <tr className="clickable" onClick={() => setOpen(open === r.seq ? null : r.seq)}>
-                        <td className="chev"><IconChevronRight style={{ transform: open === r.seq ? "rotate(90deg)" : undefined }} /></td>
-                        <td className="muted">{r.seq}</td>
-                        <td><Badge tone={eventTone(r.eventType)}>{fmt.words(r.eventType)}</Badge></td>
-                        <td><Mono title={r.entityId}>{r.entityId.length > 14 ? `${r.entityId.slice(0, 13)}…` : r.entityId}</Mono></td>
-                        <td>{r.terminalCode ?? <span className="muted">—</span>}</td>
-                        <td><Mono title={r.hash}>{r.hash.slice(0, 10)}…</Mono></td>
-                        <td className="muted">{fmt.dateTime(r.createdAt)}</td>
-                      </tr>
-                      {open === r.seq && (
-                        <tr className="expand">
-                          <td colSpan={7}>
-                            <div className="journal-detail">
-                              <pre>{pretty(r.payload)}</pre>
-                              <div>
-                                <p><span className="muted">Previous hash</span><br /><Mono>{r.prevHash}</Mono></p>
-                                <p><span className="muted">This entry’s hash</span><br /><Mono>{r.hash}</Mono></p>
-                                {/^[0-9a-f-]{36}$/i.test(r.entityId) && <Button kind="ghost" size="sm" onClick={() => openSession(r.entityId)}>Open session</Button>}
+          <div className="table-wrap">
+            <table className="table table--dense">
+              <thead><tr><th /><th>#</th><th>Event</th><th>Entity</th><th>Kiosk</th><th>Hash</th><th>When</th></tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <Fragment key={r.seq}>
+                    <tr className="clickable" onClick={() => setOpen(open === r.seq ? null : r.seq)}>
+                      <td className="chev"><IconChevronRight style={{ transform: open === r.seq ? "rotate(90deg)" : undefined }} /></td>
+                      <td className="muted">{r.seq}</td>
+                      <td><Badge tone={eventTone(r.eventType)}>{fmt.words(r.eventType)}</Badge></td>
+                      <td><Mono title={r.entityId}>{r.entityId.length > 14 ? `${r.entityId.slice(0, 13)}…` : r.entityId}</Mono></td>
+                      <td>{r.terminalCode ?? <span className="muted">—</span>}</td>
+                      <td><Mono title={r.hash}>{r.hash.slice(0, 10)}…</Mono></td>
+                      <td className="muted">{fmt.dateTime(r.createdAt)}</td>
+                    </tr>
+                    {open === r.seq && (
+                      <tr className="expand">
+                        <td colSpan={7}>
+                          <div className="journal-detail">
+                            <pre>{pretty(r.payload)}</pre>
+                            <div>
+                              <p><span className="muted">Previous hash</span><br /><Mono>{r.prevHash}</Mono></p>
+                              <p><span className="muted">This entry’s hash</span><br /><Mono>{r.hash}</Mono></p>
+                              <div className="row-actions">
+                                <Button kind="ghost" size="sm" onClick={() => { setEntity(r.entityId); set({ entity: r.entityId }); }}>Only this entity</Button>
+                                {/^ses_|^[0-9a-f-]{36}$/i.test(r.entityId) && <Button kind="ghost" size="sm" onClick={() => openSession(r.entityId)}>Open session</Button>}
                               </div>
                             </div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {more && <div className="card__foot"><Button kind="ghost" onClick={loadMore}>Load older entries</Button></div>}
-          </>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
+      {!badRange && <Pager data={j.data} onPage={(n) => { setOpen(null); paging.setPage(n); }} onSize={paging.setSize} />}
     </Card>
   );
 }
