@@ -50,7 +50,8 @@ public class PortalTerminalsController {
                                         message = "Use 3 to 50 letters, digits and hyphens, for example STM-NBO-MOI-04") String terminalCode,
                                 @NotBlank @Size(max = 20) String branchCode,
                                 @Size(max = 100) String branchName,
-                                @Size(max = 80) String name, @Size(max = 160) String location, @Size(max = 500) String notes) {}
+                                @Size(max = 80) String name, @Size(max = 160) String location, @Size(max = 500) String notes,
+                                @Size(max = 60) String model, @Size(max = 45) String ipAddress) {}
 
     public record Created(String terminalCode, String branchCode, String token) {}
 
@@ -68,17 +69,19 @@ public class PortalTerminalsController {
         }
         String token = newToken();
         jdbc.sql("""
-                INSERT INTO terminals (terminal_code, branch_code, token_hash, name, location, notes, updated_at)
-                VALUES (:c, :b, :h, :n, :l, :o, now())""")
+                INSERT INTO terminals (terminal_code, branch_code, token_hash, name, location, notes, model, last_ip, updated_at)
+                VALUES (:c, :b, :h, :n, :l, :o, :md, :ip, now())""")
                 .param("c", code).param("b", branch).param("h", Hashing.sha256Hex(token))
-                .param("n", blank(req.name())).param("l", blank(req.location())).param("o", blank(req.notes())).update();
+                .param("n", blank(req.name())).param("l", blank(req.location())).param("o", blank(req.notes()))
+                .param("md", blank(req.model())).param("ip", blank(req.ipAddress())).update();
         audit.record("TERMINAL_CREATED", code, null, Map.of("branchCode", branch, "by", by(admin)));
         telemetry.changed(code);
         return new Created(code, branch, token);
     }
 
     public record UpdateRequest(@NotBlank @Size(max = 20) String branchCode, @Size(max = 100) String branchName,
-                                @Size(max = 80) String name, @Size(max = 160) String location, @Size(max = 500) String notes) {}
+                                @Size(max = 80) String name, @Size(max = 160) String location, @Size(max = 500) String notes,
+                                @Size(max = 60) String model, @Size(max = 45) String ipAddress) {}
 
     /** Branch, name, location and notes. The kiosk ID cannot change: sessions, cash and the audit journal refer to it. */
     @PutMapping("/{terminalCode}")
@@ -88,9 +91,11 @@ public class PortalTerminalsController {
         Row t = find(terminalCode);
         String branch = branch(req.branchCode(), req.branchName());
         jdbc.sql("""
-                UPDATE terminals SET branch_code = :b, name = :n, location = :l, notes = :o, updated_at = now()
+                UPDATE terminals SET branch_code = :b, name = :n, location = :l, notes = :o, model = :md,
+                       last_ip = coalesce(:ip, last_ip), updated_at = now()
                 WHERE id = :id""")
                 .param("b", branch).param("n", blank(req.name())).param("l", blank(req.location())).param("o", blank(req.notes()))
+                .param("md", blank(req.model())).param("ip", blank(req.ipAddress()))
                 .param("id", t.id()).update();
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("by", by(admin));
@@ -149,7 +154,7 @@ public class PortalTerminalsController {
         boolean deleted;
         try {
             deleted = Boolean.TRUE.equals(ownTx.execute(tx -> {
-                for (String table : new String[]{"device_tokens", "terminal_telemetry", "cassette_inventory"}) {
+                for (String table : new String[]{"device_tokens", "terminal_telemetry", "cassette_inventory", "terminal_module_events"}) {
                     jdbc.sql("DELETE FROM " + table + " WHERE terminal_id = :id").param("id", t.id()).update();
                 }
                 return jdbc.sql("DELETE FROM terminals WHERE id = :id").param("id", t.id()).update() > 0;
@@ -185,8 +190,11 @@ public class PortalTerminalsController {
         if (!code.matches("[A-Z0-9][A-Z0-9-]{0,19}")) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Branch code: letters, digits and hyphens only.");
         }
-        boolean exists = jdbc.sql("SELECT count(*) FROM branches WHERE code = :c").param("c", code).query(Long.class).single() > 0;
-        if (!exists) {
+        String status = jdbc.sql("SELECT status FROM branches WHERE code = :c").param("c", code).query(String.class).optional().orElse(null);
+        if ("CLOSED".equals(status)) {
+            throw new ApiException(HttpStatus.CONFLICT, "BRANCH_CLOSED", "Branch " + code + " is closed. Reopen it on the Branches page first.");
+        }
+        if (status == null) {
             if (branchName == null || branchName.isBlank()) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "BRANCH_NOT_FOUND", "Branch " + code + " does not exist. Give its name to add it.");
             }

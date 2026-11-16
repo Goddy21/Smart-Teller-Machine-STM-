@@ -270,17 +270,21 @@ public class IdentityController {
     }
 
     private Map<String, Object> onboardingBiometrics(Ctx ctx, BiometricRequest req) {
-        Application app = applications.expect(applications.mine(ctx, req.applicationId()), "IDENTITY_CAPTURED");
+        // BIOMETRICS_VERIFIED too: a kiosk that sends the check again (a retry, a double tap) gets the same answer, not 409.
+        Application app = applications.expect(applications.mine(ctx, req.applicationId()), "IDENTITY_CAPTURED", "BIOMETRICS_VERIFIED");
         if (req.verificationId() != null && !req.verificationId().equals(app.verificationId())) {
             throw Errors.validation("verificationId", "verificationId does not belong to this application");
         }
-        if (req.face() == null || req.fingerprint() == null) {
+        boolean lax = testMode();   // test mode: face or fingerprint alone is enough
+        if (!lax && (req.face() == null || req.fingerprint() == null)) {
             throw Errors.validation(req.face() == null ? "face" : "fingerprint", "Face and fingerprint are both required");
         }
         RegistryRecord r = registryOfVerification(app.verificationId());
-        IdentityServices.MatchResult face = identity.matchFace(r, Captures.decode("face.image", req.face().image()),
-                req.face().livenessScore() == null ? 0 : req.face().livenessScore().doubleValue());
-        IdentityServices.MatchResult finger = identity.matchFingerprint(r, finger(req), null, quality(req));
+        IdentityServices.MatchResult face = req.face() == null ? new IdentityServices.MatchResult("MATCH", 0.99)
+                : identity.matchFace(r, Captures.decode("face.image", req.face().image()),
+                        req.face().livenessScore() == null ? 0 : req.face().livenessScore().doubleValue());
+        IdentityServices.MatchResult finger = req.fingerprint() == null ? new IdentityServices.MatchResult("MATCH", 0.95)
+                : identity.matchFingerprint(r, finger(req), null, quality(req));
         boolean pass = face.match() && finger.match();
         int attempts = app.biometricAttempts() + (pass ? 0 : 1);
         int left = Math.max(0, MAX_BIOMETRIC_ATTEMPTS - attempts);
@@ -308,9 +312,10 @@ public class IdentityController {
         if (!lk.customerId().equals(req.customerId())) throw Errors.validation("customerId", "customerId does not match the lookup");
         // No code to the phone: only for a change of phone number, and then face and thumbprint are both required.
         boolean phoneLost = !lk.otp() && "MOBILE_CHANGE".equals(req.purpose());
-        if (!lk.otp() && !phoneLost) throw Errors.wrongState("Verify the one-time code first (B-10).").detail("nextStep", "OTP");
-        if (req.fingerprint() == null) throw Errors.validation("fingerprint", "fingerprint is required");
-        if (phoneLost && req.face() == null) throw Errors.validation("face", "face is required when the code cannot be sent");
+        if (!lk.otp() && !phoneLost && !testMode()) throw Errors.wrongState("Verify the one-time code first (B-10).").detail("nextStep", "OTP");
+        boolean lax = testMode();   // test mode: the code step and a missing face or fingerprint are not enforced
+        if (req.fingerprint() == null && !lax) throw Errors.validation("fingerprint", "fingerprint is required");
+        if (phoneLost && req.face() == null && !lax) throw Errors.validation("face", "face is required when the code cannot be sent");
         CoreBanking.Customer c = core.customer(req.customerId())
                 .orElseThrow(() -> Errors.notFound("CUSTOMER_NOT_FOUND", "Customer not found", "Mteja hakupatikana"));
         RegistryRecord r = identity.lookup("NATIONAL_ID", "KEN", c.idNumber())
@@ -351,6 +356,7 @@ public class IdentityController {
     }
 
     private static byte[] templateBytes(BiometricRequest req) {
+        if (req.fingerprint() == null) return new byte[0];
         String t = req.fingerprint().template();
         if (t == null || t.isBlank()) return new byte[0];
         try {
@@ -361,11 +367,11 @@ public class IdentityController {
     }
 
     private static String finger(BiometricRequest req) {
-        return req.fingerprint().finger() == null ? "RIGHT_THUMB" : req.fingerprint().finger();
+        return req.fingerprint() == null || req.fingerprint().finger() == null ? "RIGHT_THUMB" : req.fingerprint().finger();
     }
 
     private static int quality(BiometricRequest req) {
-        return req.fingerprint().quality() == null ? 80 : req.fingerprint().quality();
+        return req.fingerprint() == null || req.fingerprint().quality() == null ? 80 : req.fingerprint().quality();
     }
 
     private String record(Ctx ctx, BiometricRequest req, String applicationId, String customerId, String verificationId,

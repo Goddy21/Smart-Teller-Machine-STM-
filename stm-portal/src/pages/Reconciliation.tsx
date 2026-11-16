@@ -112,7 +112,7 @@ export function Reconciliation() {
         )}
         <Pager data={posPage.data} onPage={posPage.setPage} onSize={posPage.setSize} />
       </Card>
-      <p className="muted small">A variance opens a case for the branch cash officer. Cash postings for each transaction are on the Cash &amp; forex page.</p>
+      <p className="muted small">A variance opens a case for the branch cash officer. Cash postings for each transaction are on the Transactions page.</p>
     </div>
   );
 }

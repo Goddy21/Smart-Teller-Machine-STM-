@@ -159,11 +159,26 @@ public class PortalInsightsController {
     public List<Map<String, Object>> registry() {
         return rows.list("""
                 SELECT t.terminal_code, t.branch_code, b.name AS branch_name, t.status, t.service_mode, t.software_version,
-                       t.created_at, t.name, t.location, t.notes, t.token_rotated_at, t.retired_at,
+                       t.created_at, t.name, t.location, t.notes, t.token_rotated_at, t.retired_at, t.model, t.last_ip,
                        (SELECT count(*) FROM stm_sessions s WHERE s.terminal_id = t.id AND s.started_at >= date_trunc('day', now())) AS sessions_today,
                        (SELECT count(*) FROM stm_sessions s WHERE s.terminal_id = t.id) AS sessions_total,
                        (SELECT max(d.issued_at) FROM device_tokens d WHERE d.terminal_id = t.id) AS last_sign_in
                 FROM terminals t LEFT JOIN branches b ON b.code = t.branch_code ORDER BY t.terminal_code""");
+    }
+
+    /** Module status changes reported by one kiosk (D-6), newest first: what broke, when, and when it came back. */
+    @GetMapping("/terminals/{terminalCode}/module-events")
+    public Object moduleEvents(@PathVariable String terminalCode, @RequestParam(required = false) String module,
+                               @RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "25") int size) {
+        Map<String, Object> p = new HashMap<>();
+        p.put("c", terminalCode);
+        p.put("m", module == null || module.isBlank() ? null : module);
+        String from = """
+                 FROM terminal_module_events e JOIN terminals t ON t.id = e.terminal_id
+                WHERE t.terminal_code = :c AND (CAST(:m AS VARCHAR) IS NULL OR e.module = :m)""";
+        return rows.page("SELECT count(*) " + from,
+                "SELECT e.id, e.module, e.from_status, e.to_status, e.detail, e.at " + from + " ORDER BY e.at DESC, e.id DESC",
+                p, page, size);
     }
 
     @GetMapping("/reconciliation")

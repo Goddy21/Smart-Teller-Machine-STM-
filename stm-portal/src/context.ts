@@ -4,7 +4,7 @@ import type { PortalApi } from "./api/portal";
 import type { TellerConsole } from "./video/TellerConsole";
 import type { ConfirmOptions } from "./ui/kit";
 
-export type Page = "overview" | "sessions" | "applications" | "video" | "fleet" | "cash" | "cards" | "reconciliation" | "audit"
+export type Page = "overview" | "sessions" | "applications" | "video" | "fleet" | "branches" | "cash" | "cards" | "reconciliation" | "audit"
   | "reference" | "simulator" | "users";
 
 export interface PortalCtx {

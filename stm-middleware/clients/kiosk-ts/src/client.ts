@@ -4,7 +4,7 @@ import type {
   CardOrderRequest, CardView, CashPositions, CassetteView, DepositCounted, DepositCountRequest, DepositCredited,
   DepositOpened, DepositTarget, DepositTargetRequest, DeviceStatus, DeviceToken, Dispensed, DispenseRequest,
   DocumentVerified, DocumentVerifyRequest, EndReason, ErrorCode, FeeQuote, FeeQuoteRequest, FxConfirmed, FxCounted,
-  FxCountRequest, FxExchangeOpened, FxExchangeRequest, FxQuote, FxQuoteRequest, FxRates, HealthAccepted, HealthReport,
+  FxCountRequest, FxExchangeOpened, FxExchangeRequest, FxQuote, FxQuoteRequest, FxRates, HealthAccepted, HealthReport, OperatorSignIn,
   JournalUpload, KraResult, KycStatus, SimSwapCheck, KycCaptured, KycRequest, Lang, LookupRequest, LookupResult, Money, Note, OtpSendRequest,
   OpenDepositRequest, OtpSent, OtpVerified, PinSetRequest, PinVerified, PinVerifyRequest, PrintStep, Product, Receipt, ReceiptRequest,
   ReceiptStatus, Reconciliation, Reversal, ReverseRequest, SessionEnded, SessionStarted, SignatureRequest, SmsQueued,
@@ -197,6 +197,15 @@ export class StmClient {
   /** D-5 */
   tariffs() { return this.call<Tariffs>("GET", "/config/tariffs", undefined, { session: false }); }
   /** D-6. Send at boot, every few minutes and whenever a module changes. disabledServices: hide those tiles. */
+  /** O-1: a custodian, CIT crew, engineer or supervisor signs in on the maintenance screen. */
+  operatorLogin(username: string, pin: string) {
+    return this.call<OperatorSignIn>("POST", "/operators/login", { username, pin }, { session: false });
+  }
+  /** O-2 */
+  operatorLogout(operatorRef: string, summary?: string) {
+    return this.call<{ signedOut: true }>("POST", "/operators/logout", { operatorRef, summary }, { session: false });
+  }
+
   reportHealth(h: HealthReport) {
     return this.call<HealthAccepted>("POST", `/devices/${this.deviceId}/health`, { reportedAt: new Date().toISOString(), ...h }, { session: false });
   }

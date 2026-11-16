@@ -36,7 +36,7 @@ export type ErrorCode =
   | "OTP_TRIES_EXCEEDED" | "RESEND_TOO_SOON" | "SIM_SWAP_RISK"
   // cards
   | "PIN_INCORRECT" | "PIN_TRIES_EXCEEDED" | "PIN_POLICY" | "PIN_NOT_CONFIRMED" | "CARD_BLOCKED" | "CARD_EXPIRED"
-  | "ACCOUNT_NOT_ELIGIBLE" | "CARD_TEMP_BLOCKED" | "CARD_BLOCKED_PERMANENT" | "PIN_LOCKED" | "PIN_UNCHANGED"
+  | "OPERATOR_INVALID" | "OPERATOR_LOCKED" | "ACCOUNT_NOT_ELIGIBLE" | "CARD_TEMP_BLOCKED" | "CARD_BLOCKED_PERMANENT" | "PIN_LOCKED" | "PIN_UNCHANGED"
   // existing-customer services
   | "STEP_UP_REQUIRED" | "ACCOUNT_DORMANT" | "ACCOUNT_RESTRICTED" | "KYC_REFRESH_REQUIRED" | "MOBILE_IN_USE"
   | "MOBILE_UNCHANGED" | "MOBILE_RECENTLY_CHANGED" | "MOBILE_CHANGE_NOT_FOUND" | "SIGNATURE_UNREADABLE"
@@ -79,10 +79,23 @@ export interface Tariffs { tariffs: Tariff[]; version: string }
 
 /** D-6: module → "OK" | "PAPER_LOW" | … or { status, …extra } */
 export type ModuleStatus = string | ({ status: string } & Record<string, unknown>);
+export type ModuleKey = "upperDisplay" | "touchScreen" | "passportScanner" | "idScanner" | "receiptPrinter" | "cardReader" | "pinPad"
+  | "fingerprint" | "cashRecycler" | "handset" | "camera" | "a4Printer" | "cardPrinter";
 export interface HealthReport {
-  modules: Partial<Record<"cardReader" | "cardPrinter" | "cashRecycler" | "receiptPrinter" | "a4Printer" | "idScanner"
-    | "fingerprint" | "camera" | "pinPad", ModuleStatus>> & Record<string, ModuleStatus>;
+  modules: Partial<Record<ModuleKey, ModuleStatus>> & Record<string, ModuleStatus>;
   reportedAt?: Iso;
+  /** The kiosk's own IP address on the bank network (shown on the portal). */
+  ipAddress?: string;
+  /** Hardware model (shown on the portal). */
+  model?: string;
+}
+
+/** O-1 / O-2: terminal users on the maintenance screen. */
+export type OperatorRole = "CUSTODIAN" | "CIT" | "ENGINEER" | "SUPERVISOR";
+export type OperatorFunction = "CASH_REPLENISH" | "CASH_POSITION" | "CLEAR_BINS" | "LOAD_CARD_STOCK" | "LOAD_PAPER" | "VIEW_STATUS"
+  | "DIAGNOSTICS" | "MODULE_RESET" | "SERVICE_MODE" | "VIEW_LOGS" | "END_OF_DAY" | (string & {});
+export interface OperatorSignIn {
+  operatorRef: string; username: string; fullName: string; role: OperatorRole; functions: OperatorFunction[]; expiresInSec: number;
 }
 export interface HealthAccepted { accepted: true; disabledServices: ServiceKey[] }
 

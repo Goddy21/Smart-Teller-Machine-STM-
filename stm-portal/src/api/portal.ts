@@ -178,19 +178,47 @@ export interface TerminalRow {
   terminalCode: string; branchCode: string; branchName: string | null; status: string; serviceMode: "IN_SERVICE" | "LOCKED";
   softwareVersion: string | null; createdAt: string; sessionsToday: number; sessionsTotal: number; lastSignIn: string | null;
   name: string | null; location: string | null; notes: string | null; tokenRotatedAt: string | null; retiredAt: string | null;
+  /** Hardware model and the kiosk's own IP address, as entered or as the kiosk reports them in D-6. */
+  model: string | null; lastIp: string | null;
 }
 /** What an administrator fills in for a kiosk. branchName is only needed for a branch that does not exist yet. */
-export interface TerminalDetails { branchCode: string; branchName?: string; name?: string; location?: string; notes?: string }
+export interface TerminalDetails { branchCode: string; branchName?: string; name?: string; location?: string; notes?: string; model?: string; ipAddress?: string }
+
+/** One change in a kiosk module's status, from the D-6 health reports. */
+export interface ModuleEvent { id: number; module: string; fromStatus: string | null; toStatus: string; detail: string | null; at: string }
+
+export interface BranchRow {
+  code: string; name: string; location: string | null; region: string | null; status: "ACTIVE" | "CLOSED";
+  createdAt: string; updatedAt: string | null; terminals: number; terminalsActive: number; users: number; terminalUsers: number;
+  sessionsToday: number;
+}
+export interface BranchDetails { name: string; location?: string; region?: string }
+
+export type OperatorRole = "CUSTODIAN" | "CIT" | "ENGINEER" | "SUPERVISOR";
+/** A terminal user: signs in on the kiosk's maintenance screen with a username and PIN. */
+export interface TerminalUser {
+  id: number; username: string; fullName: string; role: OperatorRole; phone: string | null; branchCode: string | null;
+  branchName: string | null; allTerminals: boolean; terminals: string[]; status: "ACTIVE" | "DISABLED"; failedAttempts: number;
+  lockedUntil: string | null; lastLoginAt: string | null; lastTerminal: string | null; pinChangedAt: string | null;
+  createdBy: string | null; createdAt: string;
+}
+export interface TerminalUserDetails {
+  username?: string; fullName: string; role: OperatorRole; phone?: string; branchCode?: string; allTerminals: boolean; terminals: string[];
+}
 /** The terminal token is in here once: when the kiosk is created or its token is replaced. */
 export interface TerminalCreated { terminalCode: string; branchCode: string; token: string }
 
 export type TerminalCommand = "REBOOT" | "LOCK" | "UNLOCK" | "REFRESH_CONFIG";
 
+export type TxKind = "DEPOSIT" | "WITHDRAWAL" | "FX" | "CARD" | "STATEMENT" | "ACCOUNT_OPENING" | "SERVICE";
 export interface TxRow {
-  id: string; kind: "DEPOSIT" | "WITHDRAWAL" | "FX"; terminalCode: string; sessionId: string; status: string; currency: string;
-  amount: number; localAmount: number; party: string; transactionRef: string | null; coreRef: string | null;
+  id: string; kind: TxKind; terminalCode: string; sessionId: string; status: string; currency: string;
+  amount: number; localAmount: number; fee: number; party: string; fromAccount: string | null; toAccount: string | null;
+  customerId: string | null; customerName: string | null; narration: string | null; cashFlow: "IN" | "OUT" | "NONE";
+  balanceAfter: number | null; transactionRef: string | null; coreRef: string | null;
   reversalRef: string | null; notesReturned: number | null; suspectedCounterfeit: number | null; createdAt: string; updatedAt: string;
 }
+export type TxQuery = { kind?: string; status?: string; terminal?: string; from?: string; to?: string; q?: string };
 
 export interface Posting {
   id: number; coreRef: string; accountId: string; direction: "DR" | "CR"; amount: number; currency: string; narrative: string;
@@ -389,6 +417,9 @@ export class PortalApi {
   removeTerminal(terminalCode: string) {
     return this.del<{ terminalCode: string; outcome: "DELETED" | "RETIRED" }>(`/terminals/${encodeURIComponent(terminalCode)}`);
   }
+  moduleEvents(terminalCode: string, q: { module?: string; page: number; size: number }) {
+    return this.get<Page<ModuleEvent>>(`/terminals/${encodeURIComponent(terminalCode)}/module-events`, q);
+  }
   command(terminalCode: string, command: TerminalCommand) {
     return this.post<{ applied: boolean; pushed: boolean }>(`/terminals/${encodeURIComponent(terminalCode)}/commands`, { command });
   }
@@ -398,9 +429,22 @@ export class PortalApi {
   }
 
   transactions(q: { kind?: string; status?: string } = {}) { return this.get<TxRow[]>("/transactions", q); }
-  transactionsPage(q: { kind?: string; q?: string; page: number; size: number }) { return this.get<Page<TxRow>>("/transactions", q); }
+  /** counts: rows per kind for the same filters (for the type tabs). */
+  transactionsPage(q: TxQuery & { page: number; size: number }) { return this.get<Page<TxRow>>("/transactions", q); }
   /** Today's totals and open exceptions over all transactions. */
-  transactionsSummary() { return this.get<{ depositedToday: number; withdrawnToday: number; fxToday: number; exceptions: number }>("/transactions/summary"); }
+  transactionsSummary() {
+    return this.get<{ depositedToday: number; withdrawnToday: number; fxToday: number; feesToday: number; countToday: number; exceptions: number }>("/transactions/summary");
+  }
+  /** Downloads the filtered transactions as a CSV file (opens in Excel). */
+  async exportTransactions(q: TxQuery) {
+    const qs = new URLSearchParams(Object.entries(q).filter(([, v]) => v).map(([k, v]) => [k, String(v)])).toString();
+    const res = await this.guard(send(`${BASE}/transactions/export.csv${qs ? `?${qs}` : ""}`, { headers: this.h() }));
+    const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? "stm-transactions.csv";
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
   postings(coreRefs: string) { return this.get<Posting[]>("/postings", { refs: coreRefs }); }
   cardOrders(status?: string) { return this.get<CardOrder[]>("/card-orders", { status }); }
   cardOrdersPage(q: { status?: string; q?: string; page: number; size: number }) { return this.get<Page<CardOrder>>("/card-orders", q); }
@@ -436,6 +480,22 @@ export class PortalApi {
   simCustomers(q?: string) { return this.get<SimCustomer[]>("/simulator/customers", { q }); }
   simPostings(accountId: string) { return this.get<Posting[]>(`/simulator/accounts/${encodeURIComponent(accountId)}/postings`); }
   simGl() { return this.get<{ gl: string; currency: string; balance: number; postings: number }[]>("/simulator/gl"); }
+
+  // ---- branches (list: everyone; changes: ADMIN)
+  branches() { return this.get<BranchRow[]>("/branches"); }
+  createBranch(code: string, d: BranchDetails) { return this.post<BranchRow>("/branches", { code, ...d }); }
+  updateBranch(code: string, d: BranchDetails) { return this.put<BranchRow>(`/branches/${encodeURIComponent(code)}`, d); }
+  setBranchStatus(code: string, status: "ACTIVE" | "CLOSED") { return this.put<BranchRow>(`/branches/${encodeURIComponent(code)}/status`, { status }); }
+  removeBranch(code: string) { return this.del<{ code: string; deleted: boolean }>(`/branches/${encodeURIComponent(code)}`); }
+
+  // ---- terminal users (list: SUPERVISOR, AUDITOR, ADMIN; changes: ADMIN). The PIN is returned once.
+  terminalUsers(q: { branch?: string; terminal?: string } = {}) { return this.get<TerminalUser[]>("/terminal-users", q); }
+  terminalUserRoles() { return this.get<Record<string, string[]>>("/terminal-users/roles"); }
+  createTerminalUser(d: TerminalUserDetails) { return this.post<{ user: TerminalUser; pin: string }>("/terminal-users", d); }
+  updateTerminalUser(id: number, d: TerminalUserDetails) { return this.put<TerminalUser>(`/terminal-users/${id}`, d); }
+  resetTerminalUserPin(id: number) { return this.post<{ user: TerminalUser; pin: string }>(`/terminal-users/${id}/reset-pin`); }
+  setTerminalUserStatus(id: number, status: "ACTIVE" | "DISABLED") { return this.put<TerminalUser>(`/terminal-users/${id}/status`, { status }); }
+  removeTerminalUser(id: number) { return this.del<{ id: number; deleted: boolean }>(`/terminal-users/${id}`); }
 
   // ---- account administration (ADMIN)
   users(includeArchived = false) { return this.get<PortalUserRow[]>("/users", includeArchived ? { includeArchived: "true" } : undefined); }

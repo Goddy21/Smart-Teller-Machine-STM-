@@ -70,6 +70,11 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/v1/portal/terminals", "/api/v1/portal/terminals/*/rotate-token").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/v1/portal/terminals/*", "/api/v1/portal/terminals/*/status").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.DELETE, "/api/v1/portal/terminals/*").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.GET, "/api/v1/portal/terminal-users/**").hasAnyRole("SUPERVISOR", "AUDITOR", "ADMIN")
+                .requestMatchers("/api/v1/portal/terminal-users/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/v1/portal/branches").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.PUT, "/api/v1/portal/branches/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/v1/portal/branches/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/v1/portal/fx-rates/**", "/api/v1/portal/simulator").hasAnyRole("SUPERVISOR", "ADMIN")
                 .requestMatchers("/api/v1/portal/audit/**", "/api/v1/portal/reconciliation/**",
                                  "/api/v1/portal/device-journal/**").hasAnyRole("SUPERVISOR", "AUDITOR", "ADMIN")

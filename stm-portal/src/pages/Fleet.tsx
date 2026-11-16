@@ -1,18 +1,34 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { usePortal } from "../context";
 import { can } from "../auth";
-import type { TerminalCommand, TerminalCreated, TerminalRow, TerminalView } from "../api/portal";
-import { Badge, Button, Card, Drawer, Empty, ErrorNote, fmt, Modal, Mono, Pager, RowMenu, Segmented, Spinner, useClientPage, useDebounced, useLoad } from "../ui/kit";
+import type { BranchRow, TerminalCommand, TerminalCreated, TerminalRow, TerminalView } from "../api/portal";
+import { Badge, Button, Card, Drawer, Empty, ErrorNote, fmt, Modal, Mono, Pager, RowMenu, Segmented, Spinner, useClientPage, useDebounced, useLoad, usePaging } from "../ui/kit";
 import { Meter } from "../ui/charts";
 import {
-  IconAlert, IconCheck, IconCopy, IconEdit, IconKey, IconLock, IconMapPin, IconMonitor, IconPause, IconPlus, IconPower, IconRefresh, IconSearch, IconTrash, IconUnlock,
+  IconAlert, IconCheck, IconCopy, IconEdit, IconKey, IconLock, IconMonitor, IconPause, IconPlus, IconPower, IconRefresh, IconSearch, IconTrash, IconUnlock,
 } from "../ui/Icons";
-import { label, MODULE_LABEL, SERVICE_LABEL } from "../ui/labels";
+import { label, MODULE_LABEL, MODULE_NEEDS, moduleTone, SERVICE_LABEL, STM_MODULES } from "../ui/labels";
+import { TransactionsTable } from "./Transactions";
+import { TerminalUsers } from "./TerminalUsers";
 
 const LOW_STOCK = 50;   // matches stm.low-card-stock in the middleware
 const STOCK_FULL = 500;
 
 export function Fleet() {
+  const { user } = usePortal();
+  const [tab, setTab] = useState<"kiosks" | "users">("kiosks");
+  const seeUsers = ["SUPERVISOR", "AUDITOR", "ADMIN"].includes(user.role);
+  return (
+    <div className="stack">
+      {seeUsers && <Segmented value={tab} onChange={setTab} options={[
+        { value: "kiosks", label: "Kiosks" }, { value: "users", label: "Terminal users" },
+      ]} />}
+      {tab === "kiosks" || !seeUsers ? <Kiosks /> : <TerminalUsers />}
+    </div>
+  );
+}
+
+function Kiosks() {
   const { portal, toast, confirm, user } = usePortal();
   const admin = can.manageKiosks(user.role);
   const control = can.controlKiosks(user.role);
@@ -22,7 +38,7 @@ export function Fleet() {
   const [open, setOpen] = useState<string | null>(null);
   const tele = useLoad(() => portal.terminals(), [], 30_000);
   const reg = useLoad(() => portal.registry(), [], 30_000);
-  const branches = useLoad(() => portal.reference().then((r) => r.branches), []);
+  const branches = useLoad(() => portal.branches(), []);
   const [live, setLive] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<TerminalRow | null>(null);
@@ -63,7 +79,7 @@ export function Fleet() {
     if (filter === "offline" && t.online) return false;
     if (filter === "attention" && !needsAttention(t, r)) return false;
     if (!dq) return true;
-    return [t.terminalCode, t.branchCode, r?.branchName, r?.name, r?.location].some((s) => s?.toLowerCase().includes(dq));
+    return [t.terminalCode, t.branchCode, r?.branchName, r?.name, r?.location, r?.model, r?.lastIp].some((s) => s?.toLowerCase().includes(dq));
   }), [merged, filter, dq]);
   const paged = useClientPage(shown, "fleet", [filter, dq]);
 
@@ -153,7 +169,7 @@ export function Fleet() {
         ) : shown.length === 0 ? <Empty icon={<IconMonitor />} title="No kiosks match" /> : (
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>Kiosk</th><th>Connection</th><th>Service</th><th>Health</th><th className="num">Blank cards</th><th>Cash held</th><th className="num">Sessions today</th><th /></tr></thead>
+              <thead><tr><th>Kiosk</th><th>Connection</th><th>Service</th><th>Health</th><th>Modules</th><th className="num">Blank cards</th><th>Cash held</th><th className="num">Sessions today</th><th /></tr></thead>
               <tbody>
                 {paged.rows.map(({ t, r }) => {
                   const locked = t.serviceMode === "LOCKED";
@@ -178,6 +194,7 @@ export function Fleet() {
                           : <Badge tone="good">All OK</Badge>}
                         {t.healthReportedAt && <small className="muted"><br />report {fmt.ago(t.healthReportedAt)}</small>}
                       </td>
+                      <td><ModulesCell t={t} /></td>
                       <td className={`num ${t.cardStock != null && t.cardStock < LOW_STOCK ? "dir-dr" : ""}`}>{t.cardStock ?? "—"}</td>
                       <td className="small nowrap">{cash.length ? cash.map((c) => <div key={c.currency}>{fmt.money(c.value, c.currency)}</div>) : <span className="muted">—</span>}</td>
                       <td className="num">{r?.sessionsToday ?? "—"}<small className="muted"><br />{r ? `${fmt.num(r.sessionsTotal)} in all` : ""}</small></td>
@@ -207,10 +224,10 @@ export function Fleet() {
         <Pager data={paged.data} onPage={paged.setPage} onSize={paged.setSize} />
       </Card>
 
-      <Drawer open={!!openRow} onClose={() => setOpen(null)} title={openRow?.t.terminalCode ?? ""}
-              subtitle={openRow ? <span className="muted">{openRow.r?.name ? `${openRow.r.name} · ` : ""}{openRow.r?.branchName ?? openRow.t.branchCode}</span> : null}>
-        {openRow && <KioskCard t={openRow.t} r={openRow.r} onCommand={command}
-                               menu={admin && openRow.r ? <RowMenu label="Manage">{adminMenu(openRow.r)}</RowMenu> : null} />}
+      <Drawer wide open={!!openRow} onClose={() => setOpen(null)} title={openRow?.t.terminalCode ?? ""}
+              subtitle={openRow ? <span className="muted">{openRow.r?.name ? `${openRow.r.name} · ` : ""}{openRow.r?.branchName ?? openRow.t.branchCode}{openRow.r?.location ? ` · ${openRow.r.location}` : ""}</span> : null}>
+        {openRow && <KioskDetail t={openRow.t} r={openRow.r} onCommand={command}
+                                 menu={admin && openRow.r ? <RowMenu label="Manage">{adminMenu(openRow.r)}</RowMenu> : null} />}
       </Drawer>
 
       {admin && retired.length > 0 && (
@@ -265,35 +282,39 @@ const NEW_BRANCH = "__new__";
 
 /** Add a kiosk, or edit one (the ID cannot change: sessions, cash and the audit journal refer to it). */
 function KioskForm({ open, kiosk, branches, onClose, onSaved }: {
-  open: boolean; kiosk?: TerminalRow; branches: { code: string; name: string }[];
+  open: boolean; kiosk?: TerminalRow; branches: BranchRow[];
   onClose: () => void; onSaved: (created?: TerminalCreated) => void;
 }) {
   const { portal } = usePortal();
-  const blank = { code: "", branch: "", newCode: "", newName: "", name: "", location: "", notes: "" };
+  const blank = { code: "", branch: "", newCode: "", newName: "", name: "", location: "", notes: "", model: "", ip: "" };
   const [f, setF] = useState(blank);
   const [key, setKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const want = open ? (kiosk?.terminalCode ?? "") : null;
+  const open_ = branches;
   if (want !== key) {     // (re)fill the form each time it opens
     setKey(want);
     setError("");
     if (want !== null) {
-      setF(kiosk ? { ...blank, code: kiosk.terminalCode, branch: kiosk.branchCode, name: kiosk.name ?? "", location: kiosk.location ?? "", notes: kiosk.notes ?? "" }
-                 : { ...blank, branch: branches[0]?.code ?? NEW_BRANCH });
+      setF(kiosk ? { ...blank, code: kiosk.terminalCode, branch: kiosk.branchCode, name: kiosk.name ?? "", location: kiosk.location ?? "", notes: kiosk.notes ?? "",
+                     model: kiosk.model ?? "", ip: kiosk.lastIp ?? "" }
+                 : { ...blank, branch: open_.find((b) => b.status === "ACTIVE")?.code ?? NEW_BRANCH });
     }
   }
   const set = <K extends keyof typeof f>(k: K, v: string) => setF((x) => ({ ...x, [k]: v }));
   const isNewBranch = f.branch === NEW_BRANCH;
   // An edited kiosk may sit in a branch that is not in the list any more: keep it selectable.
-  const options = kiosk && !branches.some((b) => b.code === kiosk.branchCode) ? [{ code: kiosk.branchCode, name: kiosk.branchName ?? kiosk.branchCode }, ...branches] : branches;
+  // Closed branches take no new kiosks, but an edited kiosk keeps its own branch selectable.
+  const usable = branches.filter((b) => b.status === "ACTIVE" || b.code === kiosk?.branchCode).map((b) => ({ code: b.code, name: b.name }));
+  const options = kiosk && !usable.some((b) => b.code === kiosk.branchCode) ? [{ code: kiosk.branchCode, name: kiosk.branchName ?? kiosk.branchCode }, ...usable] : usable;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true); setError("");
     const details = {
       branchCode: isNewBranch ? f.newCode.trim() : f.branch, branchName: isNewBranch ? f.newName.trim() : undefined,
-      name: f.name.trim(), location: f.location.trim(), notes: f.notes.trim(),
+      name: f.name.trim(), location: f.location.trim(), notes: f.notes.trim(), model: f.model.trim(), ipAddress: f.ip.trim() || undefined,
     };
     try {
       if (kiosk) { await portal.updateTerminal(kiosk.terminalCode, details); onSaved(); }
@@ -319,7 +340,8 @@ function KioskForm({ open, kiosk, branches, onClose, onSaved }: {
           <select className="select" value={f.branch} onChange={(e) => set("branch", e.target.value)} required>
             {options.map((b) => <option key={b.code} value={b.code}>{b.name} ({b.code})</option>)}
             <option value={NEW_BRANCH}>Add a new branch…</option>
-          </select></label>
+          </select>
+          <small className="muted">Branches are managed on the Branches page; closed branches are not listed.</small></label>
         {isNewBranch && (
           <div className="form__row">
             <label><span>New branch code</span><input className="input" value={f.newCode} onChange={(e) => set("newCode", e.target.value.toUpperCase())}
@@ -333,6 +355,14 @@ function KioskForm({ open, kiosk, branches, onClose, onSaved }: {
             <input className="input" value={f.name} onChange={(e) => set("name", e.target.value)} maxLength={80} placeholder="Banking hall kiosk" /></label>
           <label><span>Where it stands <small className="muted">(optional)</small></span>
             <input className="input" value={f.location} onChange={(e) => set("location", e.target.value)} maxLength={160} placeholder="Ground floor, by the entrance" /></label>
+        </div>
+        <div className="form__row">
+          <label><span>Model <small className="muted">(optional)</small></span>
+            <input className="input" value={f.model} onChange={(e) => set("model", e.target.value)} maxLength={60} placeholder="STM with card printer" /></label>
+          <label><span>IP address <small className="muted">(optional)</small></span>
+            <input className="input" value={f.ip} onChange={(e) => set("ip", e.target.value)} maxLength={45} placeholder="10.8.0.21" spellCheck={false}
+                   pattern="[0-9a-fA-F.:]{3,45}" />
+            <small className="muted">The kiosk can also report it itself in its health report.</small></label>
         </div>
         <label><span>Notes <small className="muted">(optional)</small></span>
           <textarea className="input" rows={2} value={f.notes} onChange={(e) => set("notes", e.target.value)} maxLength={500} /></label>
@@ -368,7 +398,40 @@ function TokenModal({ issued, onClose }: { issued: (TerminalCreated & { replaced
   );
 }
 
-function KioskCard({ t, r, onCommand, menu }: {
+type ModuleValue = string | { status: string; detail?: string; message?: string; errorCode?: string; blankStock?: number; [k: string]: unknown };
+
+/** Every module the kiosk reported plus the ones an STM should have but did not report. */
+function moduleRows(t: TerminalView) {
+  const reported = t.modules ?? {};
+  const expected = STM_MODULES.filter((m) => !(m === "passportScanner" && "idScanner" in reported));
+  const keys = [...expected, ...Object.keys(reported).filter((k) => !expected.includes(k))];
+  return keys.map((k) => {
+    const v = reported[k] as ModuleValue | undefined;
+    const status = v == null ? null : typeof v === "string" ? v : v.status;
+    const o = v && typeof v === "object" ? v : null;
+    const detail = o ? [o.errorCode, o.detail ?? o.message, o.blankStock != null ? `${o.blankStock} blank cards` : null].filter(Boolean).join(" · ") : "";
+    return { k, status, detail };
+  });
+}
+
+function ModulesCell({ t }: { t: TerminalView }) {
+  if (!t.healthReportedAt) return <span className="muted small">Unknown</span>;
+  const rows = moduleRows(t).filter((m) => m.status);
+  const bad = rows.filter((m) => moduleTone(m.status) !== "good");
+  return (
+    <span className="small">
+      <b className={bad.some((m) => moduleTone(m.status) === "bad") ? "dir-dr" : ""}>{rows.length - bad.length}/{rows.length} OK</b>
+      {bad.length > 0 && <span className="muted"><br />{bad.slice(0, 2).map((m) => `${label(MODULE_LABEL, m.k)}: ${fmt.words(m.status).toLowerCase()}`).join(", ")}{bad.length > 2 ? ` +${bad.length - 2}` : ""}</span>}
+    </span>
+  );
+}
+
+function KV({ rows }: { rows: [string, ReactNode][] }) {
+  return <dl className="kv">{rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v ?? "—"}</dd></div>)}</dl>;
+}
+
+/** Kiosk detail, like a terminal page on an ATM/CDM monitor: details, status of every module, cash, history, transactions. */
+function KioskDetail({ t, r, onCommand, menu }: {
   t: TerminalView; r?: TerminalRow; onCommand: (code: string, c: TerminalCommand) => void; menu?: ReactNode;
 }) {
   const { user } = usePortal();
@@ -377,92 +440,157 @@ function KioskCard({ t, r, onCommand, menu }: {
   const disabled = r != null && r.status !== "ACTIVE";
   const stock = t.cardStock;
   const stockTone = stock == null ? "warn" : stock < LOW_STOCK ? "bad" : stock < LOW_STOCK * 2 ? "warn" : "good";
-  const cassettes = Object.entries(t.cassetteCounts ?? {});
-  const modules = Object.entries(t.modules ?? {}).map(([k, v]) => ({ k, status: typeof v === "string" ? v : v.status }));
+  const modules = moduleRows(t);
+  const faulty = modules.filter((m) => m.status && moduleTone(m.status) === "bad");
+  const health = !t.healthReportedAt ? "NOT_REPORTED" : faulty.length ? "UNHEALTHY" : "HEALTHY";
+  const notes = Object.entries(t.cassetteCounts ?? {}).map(([k, n]) => { const [currency, d] = k.split(" "); return { currency, denom: Number(d), n }; });
+  const totals = cashTotals(t.cassetteCounts);
+  const noteCount = notes.reduce((a, x) => a + x.n, 0);
   const services = Object.keys(SERVICE_LABEL);
 
   return (
-    <article className={`kiosk ${t.online ? "" : "is-offline"} ${locked ? "is-locked" : ""} ${disabled ? "is-disabled" : ""}`}>
-      <header className="kiosk__head">
-        <span className="kiosk__icon"><IconMonitor /></span>
-        <div>
-          <h3>{t.terminalCode}</h3>
-          <small>{r?.name ? `${r.name} · ` : ""}{r?.branchName ?? t.branchCode}</small>
-        </div>
-        <span className={`kiosk__state ${t.online ? "on" : "off"}`}><span className="dot" />{t.online ? "Online" : "Offline"}</span>
-        {menu}
-      </header>
-      {r?.location && <div className="kiosk__place"><IconMapPin /> {r.location}</div>}
-
-      <div className="badges">
-        {t.status && <Badge value={t.status} />}
-        {disabled ? <Badge tone="bad">Disabled</Badge>
-          : <Badge value={t.serviceMode} tone={locked ? "bad" : "good"}>{locked ? "Locked" : "In service"}</Badge>}
-        {t.softwareVersion && <Mono>v{t.softwareVersion}</Mono>}
-        <span className="muted small">{t.lastSeen ? `heard from ${fmt.ago(t.lastSeen)}` : "never connected"}</span>
-      </div>
-      {!t.healthReportedAt && (
-        <div className="callout callout--warn"><IconAlert /><div><b>No health report yet</b>
-          <span>The kiosk app has not sent its health report (D-6, <Mono>POST /stm/v1/devices/{t.terminalCode}/health</Mono>, every 60 s), so its modules, card stock and alarms are unknown here.
-            {t.lastContactAt ? " It is connecting, so the report is the only thing missing." : ""}</span></div></div>
-      )}
-
-      {modules.length > 0 && (
-        <div className="modules">
-          {modules.map((m) => (
-            <span key={m.k} className={`module is-${m.status === "OK" ? "ok" : /OUT|FAULT|JAM|OFFLINE|ERROR/.test(m.status) ? "bad" : m.status ? "warn" : "unknown"}`}
-                  title={`${label(MODULE_LABEL, m.k)}: ${fmt.words(m.status)}`}>
-              <span className="dot" /><span>{label(MODULE_LABEL, m.k)}{m.status !== "OK" ? ` · ${fmt.words(m.status)}` : ""}</span>
-            </span>
-          ))}
-        </div>
-      )}
-
-      <div className="services" aria-label="Services offered on the home screen">
-        {services.map((sv) => {
-          const off = locked || disabled || t.disabledServices.includes(sv);
-          return <Badge key={sv} tone={off ? "neutral" : "good"}>{off ? <s>{SERVICE_LABEL[sv]}</s> : SERVICE_LABEL[sv]}</Badge>;
-        })}
-      </div>
-
-      <div className="kiosk__metric">
-        <span>Blank cards</span>
-        <Meter value={stock ?? 0} max={STOCK_FULL} tone={stockTone} />
-        <b>{stock ?? "—"}</b>
-      </div>
-      {stock != null && stock < LOW_STOCK && <p className="kiosk__warn">Low card stock: refill soon.</p>}
-
-      {cassettes.length > 0 && (
-        <div className="cassettes">
-          {cassettes.map(([denom, n]) => (
-            <div key={denom}><small>{denom}</small><b>{fmt.num(n)}</b></div>
-          ))}
-        </div>
-      )}
-
-      <div className="kiosk__alarms">
-        {t.alarms.length === 0 ? <span className="muted small">No alarms</span>
-          : t.alarms.map((a) => { const [m, st] = a.split(":"); return <Badge key={a} tone="warn">{st ? `${label(MODULE_LABEL, m)}: ${fmt.words(st).toLowerCase()}` : fmt.words(a)}</Badge>; })}
-      </div>
-
-      <div className="kiosk__stats">
-        <div><small>Sessions today</small><b>{r?.sessionsToday ?? "—"}</b></div>
-        <div><small>All time</small><b>{r?.sessionsTotal ?? "—"}</b></div>
-        <div><small>Registered</small><b>{r ? fmt.date(r.createdAt) : "—"}</b></div>
-      </div>
-      {r?.tokenRotatedAt && <p className="kiosk__notes">Token replaced {fmt.ago(r.tokenRotatedAt)}</p>}
-      {r?.notes && <p className="kiosk__notes">{r.notes}</p>}
-
-      <footer className="kiosk__actions">
+    <div className="kd">
+      <div className="kd__bar">
+        <span className={`conn ${t.online ? "is-on" : ""}`}><span className="dot" />{t.online ? "Online" : "Offline"}</span>
+        <Badge value={health} tone={health === "HEALTHY" ? "good" : health === "UNHEALTHY" ? "bad" : "warn"}>{health === "NOT_REPORTED" ? "Health not reported" : fmt.words(health)}</Badge>
+        {disabled ? <Badge tone="bad">Disabled</Badge> : <Badge tone={locked ? "bad" : "good"}>{locked ? "Locked" : "In service"}</Badge>}
+        <span className="spacer" />
         {control && !disabled && (locked
           ? <Button size="sm" kind="success" icon={<IconUnlock />} onClick={() => onCommand(t.terminalCode, "UNLOCK")}>Unlock</Button>
           : <Button size="sm" kind="secondary" icon={<IconLock />} onClick={() => onCommand(t.terminalCode, "LOCK")}>Lock</Button>)}
         {control && <Button size="sm" kind="ghost" icon={<IconRefresh />} disabled={!t.commandChannel} onClick={() => onCommand(t.terminalCode, "REFRESH_CONFIG")}
-                title={t.commandChannel ? "Reload configuration" : "Needs the kiosk’s remote-command connection"}>Refresh</Button>}
+                            title={t.commandChannel ? "Reload configuration" : "Needs the kiosk’s remote-command connection"}>Refresh</Button>}
         {control && <Button size="sm" kind="ghost" icon={<IconPower />} disabled={!t.commandChannel} onClick={() => onCommand(t.terminalCode, "REBOOT")}
-                title={t.commandChannel ? "Restart the kiosk" : "Needs the kiosk’s remote-command connection"}>Reboot</Button>}
-        <Mono>{t.branchCode}</Mono>
-      </footer>
-    </article>
+                            title={t.commandChannel ? "Restart the kiosk" : "Needs the kiosk’s remote-command connection"}>Reboot</Button>}
+        {menu}
+      </div>
+
+      {!t.healthReportedAt && (
+        <div className="callout callout--warn"><IconAlert /><div><b>No health report yet</b>
+          <span>The kiosk app has not sent its health report (D-6, <Mono>POST /stm/v1/devices/{t.terminalCode}/health</Mono>, every 60 s), so the module statuses, card stock and alarms below are unknown.
+            {t.lastContactAt ? " It is connecting, so the report is the only thing missing." : ""}</span></div></div>
+      )}
+
+      <div className="kd__grid">
+        <section className="kd__box">
+          <h4>Terminal details</h4>
+          <KV rows={[
+            ["Terminal ID", <Mono>{t.terminalCode}</Mono>], ["Name", r?.name ?? "—"], ["Branch", `${r?.branchName ?? t.branchCode} (${t.branchCode})`],
+            ["Location", r?.location ?? "—"], ["IP address", r?.lastIp ? <Mono>{r.lastIp}</Mono> : "—"], ["Model", r?.model ?? "—"],
+            ["Software", t.softwareVersion ? <Mono>v{t.softwareVersion}</Mono> : "—"], ["Registered", r ? fmt.dateTime(r.createdAt) : "—"],
+            ["Last sign-in", r?.lastSignIn ? fmt.dateTime(r.lastSignIn) : "—"], ["Token replaced", r?.tokenRotatedAt ? fmt.dateTime(r.tokenRotatedAt) : "—"],
+            ["Sessions", r ? `${fmt.num(r.sessionsToday)} today · ${fmt.num(r.sessionsTotal)} in all` : "—"],
+          ]} />
+          {r?.notes && <p className="kiosk__notes">{r.notes}</p>}
+        </section>
+        <section className="kd__box">
+          <h4>Terminal status</h4>
+          <KV rows={[
+            ["Terminal status", <Badge value={health} tone={health === "HEALTHY" ? "good" : health === "UNHEALTHY" ? "bad" : "warn"}>{fmt.words(health)}</Badge>],
+            ["Device status", t.status ? <Badge value={t.status} /> : "—"],
+            ["Comms status", <Badge tone={t.online ? "good" : "bad"}>{t.online ? "Online" : "Offline"}</Badge>],
+            ["Service mode", disabled ? <Badge tone="bad">Disabled</Badge> : <Badge tone={locked ? "bad" : "good"}>{locked ? "Locked" : "In service"}</Badge>],
+            ["Remote commands", t.commandChannel ? "Connected" : "Not connected"],
+            ["Last status update", t.healthReportedAt ? `${fmt.dateTime(t.healthReportedAt)} (${fmt.ago(t.healthReportedAt)})` : "Never"],
+            ["Last contact", t.lastSeen ? `${fmt.dateTime(t.lastSeen)} (${fmt.ago(t.lastSeen)})` : "Never"],
+            ["Errors", t.alarms.length ? t.alarms.map((a) => { const [m, st] = a.split(":"); return st ? `${label(MODULE_LABEL, m)}: ${fmt.words(st).toLowerCase()}` : fmt.words(a); }).join(" · ") : "None"],
+          ]} />
+        </section>
+      </div>
+
+      <section className="kd__box">
+        <h4>Modules <small className="muted">{t.healthReportedAt ? `as reported ${fmt.ago(t.healthReportedAt)}` : "no report yet"}</small></h4>
+        <div className="table-wrap">
+          <table className="table table--dense">
+            <thead><tr><th>Module</th><th>Status</th><th>Error / detail</th><th>Switches off when faulty</th></tr></thead>
+            <tbody>
+              {modules.map((m) => (
+                <tr key={m.k} className={m.status && moduleTone(m.status) === "bad" ? "is-red" : ""}>
+                  <td><span className={`module-dot is-${m.status ? moduleTone(m.status) : "unknown"}`} /> {label(MODULE_LABEL, m.k)}</td>
+                  <td>{m.status ? <Badge value={m.status} tone={moduleTone(m.status)} /> : <span className="muted">Not reported</span>}</td>
+                  <td className="muted small">{m.detail || "—"}</td>
+                  <td className="small">{(MODULE_NEEDS[m.k] ?? []).map((s) => SERVICE_LABEL[s] ?? s).join(", ") || <span className="muted">—</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="kd__grid">
+        <section className="kd__box">
+          <h4>Services on the home screen</h4>
+          <div className="services">
+            {services.map((sv) => {
+              const off = locked || disabled || t.disabledServices.includes(sv);
+              return <Badge key={sv} tone={off ? "neutral" : "good"}>{off ? <s>{SERVICE_LABEL[sv]}</s> : SERVICE_LABEL[sv]}</Badge>;
+            })}
+          </div>
+          <h4 className="kd__sub">Blank cards</h4>
+          <div className="kiosk__metric">
+            <span>Card stock</span>
+            <Meter value={stock ?? 0} max={STOCK_FULL} tone={stockTone} />
+            <b>{stock ?? "—"}</b>
+          </div>
+          {stock != null && stock < LOW_STOCK && <p className="kiosk__warn">Low card stock: refill soon.</p>}
+        </section>
+        <section className="kd__box">
+          <h4>Notes in the recycler</h4>
+          {notes.length === 0 ? <p className="muted">No cash loaded.</p> : (
+            <table className="table table--dense">
+              <thead><tr><th>Currency</th><th className="num">Denomination</th><th className="num">Notes</th><th className="num">Value</th></tr></thead>
+              <tbody>
+                {notes.map((x) => (
+                  <tr key={`${x.currency}${x.denom}`}><td>{x.currency}</td><td className="num">{fmt.num(x.denom)}</td><td className="num">{fmt.num(x.n)}</td>
+                    <td className="num">{fmt.money(x.denom * x.n, x.currency)}</td></tr>
+                ))}
+              </tbody>
+              <tfoot><tr><th colSpan={2}>Total</th><th className="num">{fmt.num(noteCount)}</th>
+                <th className="num">{totals.map((c) => <div key={c.currency}>{fmt.money(c.value, c.currency)}</div>)}</th></tr></tfoot>
+            </table>
+          )}
+        </section>
+      </div>
+
+      <ModuleHistory code={t.terminalCode} />
+      <TransactionsTable terminal={t.terminalCode} compact />
+    </div>
+  );
+}
+
+function ModuleHistory({ code }: { code: string }) {
+  const { portal } = usePortal();
+  const [module, setModule] = useState("");
+  const paging = usePaging("module-history", [code, module], 25);
+  const ev = useLoad(() => portal.moduleEvents(code, { module: module || undefined, page: paging.page, size: paging.size }), [code, module, paging.page, paging.size], 30_000);
+  return (
+    <Card pad={false} title="Module history" subtitle="Each change of a module’s status, from the kiosk’s health reports"
+          actions={<select className="select select--sm" value={module} onChange={(e) => setModule(e.target.value)} aria-label="Module">
+            <option value="">All modules</option>
+            {Object.keys(MODULE_LABEL).map((m) => <option key={m} value={m}>{MODULE_LABEL[m]}</option>)}
+          </select>}>
+      {ev.error && !ev.data ? <div className="card__body"><ErrorNote error={ev.error} onRetry={ev.reload} /></div>
+        : !ev.data ? <div className="card__body"><Spinner /></div>
+        : ev.data.items.length === 0 ? <Empty icon={<IconMonitor />} title="No changes recorded yet" />
+        : (
+          <div className="table-wrap">
+            <table className="table table--dense">
+              <thead><tr><th>When</th><th>Module</th><th>From</th><th>To</th><th>Detail</th></tr></thead>
+              <tbody>
+                {ev.data.items.map((e) => (
+                  <tr key={e.id} className={moduleTone(e.toStatus) === "bad" ? "is-red" : ""}>
+                    <td className="muted nowrap">{fmt.dateTime(e.at)}</td>
+                    <td>{label(MODULE_LABEL, e.module)}</td>
+                    <td>{e.fromStatus ? <Badge value={e.fromStatus} tone={moduleTone(e.fromStatus)} /> : <span className="muted">first report</span>}</td>
+                    <td><Badge value={e.toStatus} tone={moduleTone(e.toStatus)} /></td>
+                    <td className="muted small">{e.detail ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      <Pager data={ev.data} onPage={paging.setPage} onSize={paging.setSize} />
+    </Card>
   );
 }

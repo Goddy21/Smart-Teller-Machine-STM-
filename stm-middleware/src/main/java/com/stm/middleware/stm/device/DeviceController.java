@@ -187,12 +187,19 @@ public class DeviceController {
 
     // ------------------------------------------------------------------ D-6 / D-7 / X-6
 
-    public record HealthReport(@NotNull Map<String, Object> modules, OffsetDateTime reportedAt) {}
+    /** ipAddress and model are optional: the kiosk's own address on the network and its hardware model. */
+    public record HealthReport(@NotNull Map<String, Object> modules, OffsetDateTime reportedAt,
+                               @Size(max = 45) String ipAddress, @Size(max = 60) String model) {}
 
     @PostMapping("/devices/{deviceId}/health")
     @SessionOptional
     public Map<String, Object> health(Ctx ctx, @PathVariable String deviceId, @Valid @RequestBody HealthReport req) {
         sameDevice(ctx, deviceId);
+        if (req.ipAddress() != null || req.model() != null) {
+            jdbc.sql("""
+                    UPDATE terminals SET last_ip = coalesce(:ip, last_ip), model = coalesce(model, :m) WHERE id = :id""")
+                    .param("ip", req.ipAddress()).param("m", req.model()).param("id", ctx.terminalId()).update();
+        }
         List<String> disabled = health.report(ctx.terminalId(), ctx.deviceId(), req.modules(), req.reportedAt());
         return Map.of("accepted", true, "disabledServices", disabled);
     }

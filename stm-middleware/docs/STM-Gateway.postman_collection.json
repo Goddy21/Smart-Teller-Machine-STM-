@@ -111,6 +111,10 @@
   {
    "key": "cardAuthRef",
    "value": ""
+  },
+  {
+   "key": "operatorPin",
+   "value": "000000"
   }
  ],
  "item": [
@@ -275,7 +279,7 @@
       "description": "A module that is not OK switches off the services that need it (disabledServices).",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"modules\": {\n    \"cardReader\": \"OK\",\n    \"cardPrinter\": {\n      \"status\": \"OK\",\n      \"blankStock\": 214\n    },\n    \"cashRecycler\": \"OK\",\n    \"receiptPrinter\": {\n      \"status\": \"PAPER_LOW\"\n    },\n    \"a4Printer\": \"OK\",\n    \"idScanner\": \"OK\",\n    \"fingerprint\": \"OK\",\n    \"camera\": \"OK\",\n    \"pinPad\": \"OK\"\n  }\n}",
+       "raw": "{\n  \"ipAddress\": \"10.8.0.21\",\n  \"model\": \"STM-7600\",\n  \"modules\": {\n    \"cardReader\": \"OK\",\n    \"cardPrinter\": {\n      \"status\": \"OK\",\n      \"blankStock\": 214\n    },\n    \"cashRecycler\": \"OK\",\n    \"receiptPrinter\": {\n      \"status\": \"PAPER_LOW\"\n    },\n    \"a4Printer\": \"OK\",\n    \"fingerprint\": \"OK\",\n    \"camera\": \"OK\",\n    \"pinPad\": \"OK\",\n    \"upperDisplay\": \"OK\",\n    \"touchScreen\": \"OK\",\n    \"handset\": \"OK\",\n    \"passportScanner\": \"OK\"\n  }\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -10588,6 +10592,82 @@
        }
       }
      ]
+    },
+    {
+     "name": "O-1 Terminal user sign-in (maintenance screen)",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "X-Device-Id",
+        "value": "{{deviceId}}"
+       },
+       {
+        "key": "X-Request-Id",
+        "value": "{{$guid}}"
+       }
+      ],
+      "url": {
+       "raw": "{{baseUrl}}/stm/v1/operators/login",
+       "host": [
+        "{{baseUrl}}"
+       ],
+       "path": [
+        "stm",
+        "v1",
+        "operators",
+        "login"
+       ]
+      },
+      "description": "A custodian, CIT crew, engineer or supervisor added on the portal (Kiosk fleet → Terminal users). Set operatorPin to the PIN the portal showed once. Answer: operatorRef, role, functions.",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"username\": \"jane.custodian\",\n  \"pin\": \"{{operatorPin}}\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
+    },
+    {
+     "name": "O-2 Terminal user sign-out",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "X-Device-Id",
+        "value": "{{deviceId}}"
+       },
+       {
+        "key": "X-Request-Id",
+        "value": "{{$guid}}"
+       }
+      ],
+      "url": {
+       "raw": "{{baseUrl}}/stm/v1/operators/logout",
+       "host": [
+        "{{baseUrl}}"
+       ],
+       "path": [
+        "stm",
+        "v1",
+        "operators",
+        "logout"
+       ]
+      },
+      "description": "Ends the maintenance sign-in (audited).",
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"operatorRef\": \"OPR-1\",\n  \"summary\": \"Replenished cash; cleared reject bin\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      }
+     }
     }
    ]
   },

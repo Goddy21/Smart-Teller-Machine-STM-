@@ -24,14 +24,16 @@ public class DeviceHealthService {
     private static final Set<String> WARNINGS = Set.of("OK", "PAPER_LOW", "LOW", "WARNING", "READY");
 
     /** Which services each module is needed by. */
-    private static final Map<String, List<String>> NEEDS = Map.of(
-            "cardReader", List.of("cardServices", "statements", "cashWithdrawal"),
-            "cardPrinter", List.of("cardServices", "accountOpening"),
-            "cashRecycler", List.of("cashDeposit", "cashWithdrawal", "forex"),
-            "idScanner", List.of("accountOpening", "forex"),
-            "fingerprint", List.of("accountOpening", "cardServices"),
-            "camera", List.of("accountOpening"),
-            "pinPad", List.of("accountOpening", "cardServices", "statements", "cashWithdrawal"));
+    private static final Map<String, List<String>> NEEDS = Map.ofEntries(
+            Map.entry("cardReader", List.of("cardServices", "statements", "cashWithdrawal")),
+            Map.entry("cardPrinter", List.of("cardServices", "accountOpening")),
+            Map.entry("cashRecycler", List.of("cashDeposit", "cashWithdrawal", "forex")),
+            Map.entry("idScanner", List.of("accountOpening", "forex")),
+            Map.entry("passportScanner", List.of("accountOpening", "forex")),
+            Map.entry("fingerprint", List.of("accountOpening", "cardServices")),
+            Map.entry("camera", List.of("accountOpening")),
+            Map.entry("pinPad", List.of("accountOpening", "cardServices", "statements", "cashWithdrawal")),
+            Map.entry("touchScreen", SERVICES));
 
     public record Status(boolean online, String cashRecycler, boolean allServicesAvailable, String message) {}
 
@@ -69,6 +71,7 @@ public class DeviceHealthService {
             }
         }
         String overall = disabled.isEmpty() ? (alarms.isEmpty() ? "OK" : "WARNING") : "DEGRADED";
+        recordChanges(terminalId, modules);
         String mods = json.write(modules);
         String dis = json.write(disabled);
         String al = json.write(alarms);
@@ -92,6 +95,33 @@ public class DeviceHealthService {
         }
         telemetry.changed(deviceId);
         return new ArrayList<>(disabled);
+    }
+
+    /** One history row per module whose status changed since the last report (the portal's "Module history"). */
+    private void recordChanges(long terminalId, Map<String, Object> modules) {
+        try {
+            String before = jdbc.sql("SELECT modules FROM terminal_telemetry WHERE terminal_id = :t").param("t", terminalId)
+                    .query(String.class).optional().orElse(null);
+            Map<String, Object> old = before == null ? Map.of() : json.read(before, Json.MAP);
+            for (var e : modules.entrySet()) {
+                String now = statusOf(e.getValue());
+                String was = old.containsKey(e.getKey()) ? statusOf(old.get(e.getKey())) : null;
+                if (now.equals(was)) continue;
+                String detail = null;
+                if (e.getValue() instanceof Map<?, ?> m) {
+                    Object d = m.get("detail") != null ? m.get("detail") : m.get("message") != null ? m.get("message") : m.get("errorCode");
+                    if (d != null) detail = String.valueOf(d);
+                }
+                jdbc.sql("""
+                        INSERT INTO terminal_module_events (terminal_id, module, from_status, to_status, detail)
+                        VALUES (:t, :m, :f, :s, :d)""")
+                        .param("t", terminalId).param("m", e.getKey().length() > 40 ? e.getKey().substring(0, 40) : e.getKey())
+                        .param("f", was).param("s", now.length() > 30 ? now.substring(0, 30) : now)
+                        .param("d", detail == null || detail.length() <= 200 ? detail : detail.substring(0, 200)).update();
+            }
+        } catch (RuntimeException ignored) {
+            // the history is a convenience: never refuse a health report because of it
+        }
     }
 
     /** The six service switches for D-2 / the A1 tiles. */

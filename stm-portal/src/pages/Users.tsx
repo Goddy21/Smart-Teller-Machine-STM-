@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { usePortal } from "../context";
 import { ROLE_LABEL, type Role } from "../auth";
 import type { EmailRow, PortalUserRow, UserActivity, UserCreated } from "../api/portal";
@@ -150,7 +150,16 @@ export function Users() {
       <CreateUser open={creating} branches={branches.data ?? []} onClose={() => setCreating(false)}
                   onCreated={(r) => { setCreating(false); setSecret({ ...r, reset: false }); list.reload(); }} />
 
-      <Drawer open={!!secret} onClose={() => setSecret(null)} title={secret?.reset ? "Password reset" : "Account created"}
+      <UserSecret secret={secret} onClose={() => setSecret(null)} />
+    </div>
+  );
+}
+
+/** The temporary password after creating an account or resetting it: emailed, or shown once. */
+export function UserSecret({ secret, onClose }: { secret: (UserCreated & { reset: boolean }) | null; onClose: () => void }) {
+  const { toast } = usePortal();
+  return (
+      <Drawer open={!!secret} onClose={onClose} title={secret?.reset ? "Password reset" : "Account created"}
               subtitle={secret ? `${secret.user.displayName} (${secret.user.username})` : ""}>
         {secret && (secret.emailedTo ? (
           <div className="callout callout--good"><IconMail /><div><b>Emailed to {secret.emailedTo}</b>
@@ -165,12 +174,11 @@ export function Users() {
           </div>
         ))}
       </Drawer>
-    </div>
   );
 }
 
 /** Reset: email the new temporary password (default when the person has an email) or show it once. */
-function ResetPassword({ user, onClose, onDone }: { user: PortalUserRow | null; onClose: () => void; onDone: (r: UserCreated) => void }) {
+export function ResetPassword({ user, onClose, onDone }: { user: PortalUserRow | null; onClose: () => void; onDone: (r: UserCreated) => void }) {
   const { portal } = usePortal();
   const [byEmail, setByEmail] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -251,8 +259,10 @@ function ActivityDrawer({ user, onClose }: { user: PortalUserRow | null; onClose
   );
 }
 
-function CreateUser({ open, branches, onClose, onCreated }: {
+export function CreateUser({ open, branches, onClose, onCreated, presetBranch }: {
   open: boolean; branches: { code: string; name: string }[]; onClose: () => void; onCreated: (r: UserCreated) => void;
+  /** Opens with this branch chosen (Branches page). */
+  presetBranch?: string;
 }) {
   const { portal } = usePortal();
   const [username, setUsername] = useState("");
@@ -260,8 +270,9 @@ function CreateUser({ open, branches, onClose, onCreated }: {
   const [email, setEmail] = useState("");
   const [sendEmail, setSendEmail] = useState(true);
   const [role, setRole] = useState<Role>("TELLER");
-  const [branchCode, setBranch] = useState("");
+  const [branchCode, setBranch] = useState(presetBranch ?? "");
   const [languages, setLanguages] = useState("en,sw");
+  useEffect(() => { if (open) setBranch(presetBranch ?? ""); }, [open, presetBranch]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -313,7 +324,7 @@ function CreateUser({ open, branches, onClose, onCreated }: {
 }
 
 /** Change a person's details. The username cannot change (it is in the audit trail). */
-function EditUser({ user, self, branches, onClose, onSaved }: {
+export function EditUser({ user, self, branches, onClose, onSaved }: {
   user: PortalUserRow | null; self: boolean; branches: { code: string; name: string }[];
   onClose: () => void; onSaved: (u: PortalUserRow) => void;
 }) {

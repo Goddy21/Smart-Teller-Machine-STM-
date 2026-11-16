@@ -10,7 +10,8 @@ import { Sessions, SessionDrawer } from "./pages/Sessions";
 import { VideoTeller } from "./pages/VideoTeller";
 import { Fleet } from "./pages/Fleet";
 import { Applications } from "./pages/Applications";
-import { Cash } from "./pages/Cash";
+import { Transactions } from "./pages/Transactions";
+import { Branches } from "./pages/Branches";
 import { Cards } from "./pages/Cards";
 import { Reconciliation } from "./pages/Reconciliation";
 import { Audit } from "./pages/Audit";
@@ -18,7 +19,7 @@ import { Reference } from "./pages/Reference";
 import { Simulator } from "./pages/Simulator";
 import { ConfirmDialog, useLoad, type ConfirmOptions } from "./ui/kit";
 import {
-  IconBook, IconCard, IconHalf, IconMoon, IconSun, IconCash, IconCheck, IconFile, IconGrid, IconLock, IconLogout, IconMonitor, IconPhone, IconRefresh, IconShield, IconUsers, IconVideo,
+  IconBook, IconCard, IconHalf, IconMoon, IconSun, IconCash, IconCheck, IconFile, IconGrid, IconLock, IconLogout, IconMapPin, IconMonitor, IconPhone, IconRefresh, IconShield, IconUsers, IconVideo,
 } from "./ui/Icons";
 import mark from "./assets/blueriver-mark.png";
 
@@ -28,9 +29,10 @@ const NAV: { page: Page; label: string; icon: ReactNode; group: string; roles: R
   { page: "sessions", label: "Customer sessions", icon: <IconUsers />, group: "Operations", roles: ALL },
   { page: "applications", label: "Applications", icon: <IconFile />, group: "Operations", roles: ALL },
   { page: "video", label: "Video teller", icon: <IconVideo />, group: "Operations", roles: ["TELLER", "SUPERVISOR"] },
-  { page: "cash", label: "Cash & forex", icon: <IconCash />, group: "Branch", roles: ALL },
+  { page: "cash", label: "Transactions", icon: <IconCash />, group: "Branch", roles: ALL },
   { page: "cards", label: "Cards", icon: <IconCard />, group: "Branch", roles: ALL },
   { page: "fleet", label: "Kiosk fleet", icon: <IconMonitor />, group: "Branch", roles: ALL },
+  { page: "branches", label: "Branches", icon: <IconMapPin />, group: "Branch", roles: ALL },
   { page: "reconciliation", label: "Reconciliation", icon: <IconCheck />, group: "Branch", roles: ["SUPERVISOR", "AUDITOR", "ADMIN"] },
   { page: "audit", label: "Audit & compliance", icon: <IconShield />, group: "Governance", roles: ["SUPERVISOR", "AUDITOR", "ADMIN"] },
   { page: "reference", label: "Products & rates", icon: <IconBook />, group: "Governance", roles: ALL },
@@ -43,9 +45,10 @@ const TITLES: Record<Page, { title: string; sub: string }> = {
   sessions: { title: "Customer sessions", sub: "Every customer at a kiosk, from “Tap to start” to “Finish”" },
   applications: { title: "Applications", sub: "Accounts opened at the kiosk, and the ones waiting for a teller" },
   video: { title: "Video teller", sub: "Take calls from customers who tap “Talk to a teller”" },
-  cash: { title: "Cash & forex", sub: "Deposits, withdrawals and currency exchange, with their core-banking postings" },
+  cash: { title: "Transactions", sub: "Every transaction at the kiosks and its status: cash, forex, cards, statements, accounts and services" },
   cards: { title: "Cards", sub: "Debit cards printed and handed over at the kiosks" },
-  fleet: { title: "Kiosk fleet", sub: "Device health, services on offer and remote control" },
+  fleet: { title: "Kiosk fleet", sub: "Module status, cash, transactions and remote control for each kiosk; terminal users" },
+  branches: { title: "Branches", sub: "Branches and the portal users who belong to them" },
   reconciliation: { title: "Reconciliation", sub: "Kiosk cash against the general ledger" },
   audit: { title: "Audit & compliance", sub: "Tamper-evident journals, text messages and video evidence" },
   reference: { title: "Products & rates", sub: "Products, fees, terms, forex rates and the terminal registry" },
@@ -200,7 +203,8 @@ function Shell({ session, onSessionEnded, onSignOut, onChangePassword }: {
             {page === "sessions" && <Sessions initialId={route.param} />}
             {page === "fleet" && <Fleet />}
             {page === "applications" && <Applications />}
-            {page === "cash" && <Cash />}
+            {page === "cash" && <Transactions />}
+            {page === "branches" && <Branches />}
             {page === "cards" && <Cards />}
             {page === "reconciliation" && <Reconciliation />}
             {page === "audit" && <Audit initialEntity={route.param} />}

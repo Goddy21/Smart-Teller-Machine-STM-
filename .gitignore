@@ -1,0 +1,11 @@
+*.zip
+*.tgz
+*.tar.gz
+node_modules/
+target/
+dist/
+.env
+deploy/.env
+certs/
+*.key
+*.conf

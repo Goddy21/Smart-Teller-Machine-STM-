@@ -27,6 +27,7 @@ public class StmErrorHandler {
     @ExceptionHandler(StmException.class)
     ResponseEntity<Map<String, Object>> stm(StmException e, HttpServletRequest req) {
         if (e.status().is5xxServerError()) log.warn("{} {}: {}", req.getMethod(), req.getRequestURI(), e.code());
+        RequestIds.noteError(req, e);
         return ResponseEntity.status(e.status()).body(ErrorBodies.body(e, RequestIds.of(req)));
     }
 

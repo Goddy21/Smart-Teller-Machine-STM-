@@ -185,11 +185,39 @@ Response `200`:
 
 `POST /stm/v1/devices/{deviceId}/health`
 
-Session optional. A module that is not OK switches off the services that need it (`disabledServices`).
+Session optional. Send it every 60 s, and at once when a module changes. A module that is not usable switches off the
+services that need it (`disabledServices`). The portal shows every module's status on the kiosk's page, keeps a history of
+each change, and marks the kiosk HEALTHY or UNHEALTHY from this report.
+
+Module keys for the STM hardware (send the ones the machine has; unknown keys are shown as sent):
+
+| Key | Module | Faulty switches off |
+|---|---|---|
+| `upperDisplay` | upper (advert) display | — |
+| `touchScreen` | customer touch screen | every service |
+| `passportScanner` (or `idScanner`) | passport / ID scanner | account opening, forex |
+| `receiptPrinter` | receipt printer | — (receipts by SMS) |
+| `cardReader` | card slot / reader | card services, statements, cash withdrawal |
+| `pinPad` | encrypting PIN pad | account opening, card services, statements, cash withdrawal |
+| `fingerprint` | fingerprint scanner | account opening, card services |
+| `cashRecycler` | cash slot / recycler | cash deposit, cash withdrawal, forex |
+| `handset` | teller-call handset | — |
+| `camera` | face camera | account opening |
+| `a4Printer` | A4 (statement) printer | — |
+| `cardPrinter` | card printer (`blankStock` = blank cards left) | card services, account opening |
+
+Status values: `OK`, `READY` (usable); `PAPER_LOW`, `LOW`, `WARNING` (usable, shown as a warning); anything else, for
+example `FAULT`, `ERROR`, `JAMMED`, `OUT_OF_PAPER`, `OFFLINE`, `NOT_PRESENT`, is a fault. A module can be an object
+`{"status": "FAULT", "errorCode": "E203", "detail": "Card jam"}`: `errorCode` and `detail` (or `message`) are shown on the portal.
+
+`ipAddress` (the kiosk's own address on the bank network) and `model` are optional; the portal shows them under
+Terminal details. Behind NAT or the VPN the middleware cannot see the kiosk's real address, so send it here.
 
 Request:
 ```json
 {
+  "ipAddress": "10.8.0.21",
+  "model": "STM-7600",
   "modules": {
     "cardReader": "OK",
     "cardPrinter": {
@@ -2253,6 +2281,61 @@ Response `200`:
   "caseId": null
 }
 ```
+## O · Terminal users (maintenance screen)
+
+Terminal users are the people who work on the machine itself: cash custodians, cash-in-transit crews, engineers and
+branch supervisors. An administrator adds them on the portal (Kiosk fleet → Terminal users) and gives each one a
+username and a 6-digit PIN, either for chosen kiosks or for every kiosk (of their branch). The kiosk app's maintenance
+screen (behind the service key or a hidden gesture) signs them in with O-1 and offers only the `functions` in the answer.
+
+### O-1 · Sign in a terminal user
+
+`POST /stm/v1/operators/login`
+
+Session optional (no customer session). Five wrong PINs lock the user for 15 minutes.
+
+Request:
+```json
+{ "username": "jane.custodian", "pin": "482913" }
+```
+Response `200`:
+```json
+{
+  "operatorRef": "OPR-1",
+  "username": "jane.custodian",
+  "fullName": "Jane Custodian",
+  "role": "CUSTODIAN",
+  "functions": ["CASH_REPLENISH", "CASH_POSITION", "CLEAR_BINS", "LOAD_CARD_STOCK", "LOAD_PAPER", "VIEW_STATUS"],
+  "expiresInSec": 1800
+}
+```
+Errors: `401 OPERATOR_INVALID` (`details.attemptsLeft`), `423 OPERATOR_LOCKED` (`details.lockedUntil`),
+`403 FORBIDDEN` (disabled, or not assigned to this kiosk).
+
+Functions by role:
+
+| Role | Functions |
+|---|---|
+| CUSTODIAN | CASH_REPLENISH, CASH_POSITION, CLEAR_BINS, LOAD_CARD_STOCK, LOAD_PAPER, VIEW_STATUS |
+| CIT | CASH_REPLENISH, CASH_POSITION, CLEAR_BINS, VIEW_STATUS |
+| ENGINEER | DIAGNOSTICS, MODULE_RESET, LOAD_PAPER, LOAD_CARD_STOCK, SERVICE_MODE, VIEW_STATUS, VIEW_LOGS |
+| SUPERVISOR | all of the above and END_OF_DAY |
+
+Sign the user out after `expiresInSec` or 2 minutes without a touch. Put `operatorRef` in the A-2 cash position report
+(`"by"`) and in electronic-journal entries for what they did.
+
+### O-2 · Sign out
+
+`POST /stm/v1/operators/logout`
+
+Request:
+```json
+{ "operatorRef": "OPR-1", "summary": "Replenished KES 1000 x 800; cleared reject bin" }
+```
+Response `200`: `{ "signedOut": true }`
+
+Sign-ins, failures and sign-outs are written to the audit journal (OPERATOR_SIGNED_IN, OPERATOR_LOGIN_FAILED, OPERATOR_SIGNED_OUT).
+
 ## Portal API (`/api/v1/portal`)
 
 Sign in with `POST /api/v1/auth/login` `{"username": "…", "password": "…"}` → `{"token": "…", "expiresAt": "…", "user": {…}}`,
@@ -2269,9 +2352,16 @@ Also `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/passw
 | `GET /applications/{id}` | all | full application: registry record, screening, consents, captures, decision |
 | `POST /applications/{id}/decision` | TELLER, SUPERVISOR | body `{"decision": "CLEAR_REFERRAL" \| "VERIFY_IDENTITY" \| "REJECT", "notes": "…"}`; CLEAR_REFERRAL only when REFERRED, VERIFY_IDENTITY only after 3 failed face matches. Returns the application |
 | `GET /captures/{id}` | all | the image (registry photo, face, signature); every view is audited |
-| `GET /transactions?kind=DEPOSIT\|WITHDRAWAL\|FX&status=` | all | `id, kind, terminalCode, sessionId, status, currency, amount, localAmount, party, transactionRef, coreRef, reversalRef, …` |
+| `GET /transactions?kind=&status=&terminal=&from=&to=&q=&page=&size=` | all | every kiosk transaction in one shape. `kind` = DEPOSIT, WITHDRAWAL, FX, CARD, STATEMENT, ACCOUNT_OPENING, SERVICE; `from`/`to` = dates (East Africa Time). Rows: `id, kind, terminalCode, sessionId, status, currency, amount, localAmount, fee, party, fromAccount, toAccount, customerId, customerName, narration, cashFlow (IN/OUT/NONE), balanceAfter, transactionRef, coreRef, reversalRef, createdAt, updatedAt`; with `page`, `counts` per kind |
+| `GET /transactions/export.csv` (same filters) | all | the rows as a CSV file for Excel (up to 20 000) |
+| `GET /transactions/summary` | all | today: `countToday, feesToday, depositedToday, withdrawnToday, fxToday, exceptions` |
+| `GET /terminals/{code}/module-events?module=&page=&size=` | all | module status changes from D-6: `module, fromStatus, toStatus, detail, at` |
+| `GET /branches` | all | `code, name, location, region, status (ACTIVE/CLOSED), terminals, terminalsActive, users, terminalUsers, sessionsToday` |
+| `POST /branches` `{code, name, location?, region?}`, `PUT /branches/{code}`, `PUT /branches/{code}/status` `{status: ACTIVE \| CLOSED}`, `DELETE /branches/{code}` | ADMIN | manage branches; a branch with active kiosks cannot be closed, one with any kiosks or users cannot be deleted |
+| `GET /terminal-users?branch=&terminal=`, `GET /terminal-users/roles` | SUPERVISOR, AUDITOR, ADMIN | terminal users (O-1) with their kiosks; functions per role |
+| `POST /terminal-users` `{username, fullName, role, phone?, branchCode?, allTerminals, terminals[]}`, `PUT /terminal-users/{id}`, `POST /terminal-users/{id}/reset-pin`, `PUT /terminal-users/{id}/status`, `DELETE /terminal-users/{id}` | ADMIN | create and reset return the 6-digit `pin` once |
 | `GET /postings?refs=FT…,FT…` | all | core-banking postings: `coreRef, accountId (or GL), direction DR/CR, amount, currency, narrative, balanceAfter` |
-| `POST /terminals` `{terminalCode, branchCode, branchName?, name?, location?, notes?}` | ADMIN | adds a kiosk; the answer has its terminal `token` once. A new branch is created when `branchName` is given |
+| `POST /terminals` `{terminalCode, branchCode, branchName?, name?, location?, notes?, model?, ipAddress?}` | ADMIN | adds a kiosk; the answer has its terminal `token` once. A new branch is created when `branchName` is given |
 | `PUT /terminals/{code}` | ADMIN | branch, name, location, notes (the kiosk ID cannot change) |
 | `POST /terminals/{code}/rotate-token` | ADMIN | replaces the terminal token (answer has the new `token` once); the old one stops working and the kiosk is signed out |
 | `PUT /terminals/{code}/status` `{status: ACTIVE \| DISABLED}` | ADMIN | a disabled kiosk cannot sign in; ACTIVE also restores a removed kiosk |

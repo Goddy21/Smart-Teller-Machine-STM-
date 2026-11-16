@@ -25,6 +25,7 @@ public final class ErrorBodies {
 
     public static void write(HttpServletRequest req, HttpServletResponse res, StmException e, ObjectMapper mapper)
             throws IOException {
+        RequestIds.noteError(req, e);
         res.setStatus(e.status().value());
         res.setContentType("application/json");
         res.setCharacterEncoding("UTF-8");

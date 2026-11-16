@@ -835,3 +835,46 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; font: inher
 .input--rate { width: 110px; height: 34px; text-align: right; }
 .date-range { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
 .date-range .input { width: 150px; }
+
+/* ---- kiosk detail (terminal page) */
+.drawer--wide { width: min(1180px, 100%); }
+.kd { display: flex; flex-direction: column; gap: 18px; }
+.kd__bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.kd__bar .spacer, .spacer { flex: 1; }
+.kd__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.kd__box { padding: 16px 18px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); min-width: 0; }
+.kd__box h4 { font: 800 13px var(--f-disp); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); margin-bottom: 12px; display: flex; gap: 8px; align-items: baseline; }
+.kd__box h4 small { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.kd__sub { margin-top: 18px; }
+.kd .card { box-shadow: none; border: 1px solid var(--line); }
+.kv { display: grid; grid-template-columns: 1fr; gap: 0; margin: 0; }
+.kv > div { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
+.kv > div:last-child { border-bottom: 0; }
+.kv dt { color: var(--muted); font-weight: 600; }
+.kv dd { margin: 0; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+dl.kv--2 { display: grid; grid-template-columns: 130px 1fr 130px 1fr; gap: 6px 12px; font-size: 13px; margin-bottom: 12px; }
+dl.kv--2 dt { color: var(--muted); font-weight: 600; }
+dl.kv--2 dd { margin: 0; overflow-wrap: anywhere; }
+.module-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--line); vertical-align: middle; margin-right: 4px; }
+.module-dot.is-good { background: var(--good); } .module-dot.is-warn { background: var(--warn); } .module-dot.is-bad { background: var(--bad); }
+.card__tabs { padding: 0 20px 12px; overflow-x: auto; }
+.table--tx td, .table--tx th { font-size: 13px; }
+.pick { border: 2px solid var(--line); border-radius: 14px; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto; }
+.pick legend { font-size: 13px; font-weight: 700; color: var(--ink-2); padding: 0 6px; }
+.token-box--pin .mono { font-size: 28px; letter-spacing: .3em; }
+@media (max-width: 900px) {
+  .kd__grid { grid-template-columns: 1fr; }
+  dl.kv--2 { grid-template-columns: 110px 1fr; }
+  .kv > div { grid-template-columns: 120px 1fr; }
+}
+
+/* ---- print: the transactions list only */
+@media print {
+  .sidebar, .topbar, .app__side, .app__top, header.top, nav, .no-print, .toasts { display: none !important; }
+  body, .app, main { background: #fff !important; }
+  .print-area { box-shadow: none !important; border: 0 !important; }
+  .table td, .table th { font-size: 10.5px; padding: 4px 6px; }
+}
+.form label.check { flex-direction: row; align-items: center; font-weight: 600; font-size: 14px; color: var(--ink); }
+.pick label.check { gap: 10px; }
+.ledger--stack { grid-template-columns: 1fr; max-width: 1100px; }

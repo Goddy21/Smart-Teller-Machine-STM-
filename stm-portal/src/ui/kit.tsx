@@ -68,6 +68,8 @@ const TONES: Record<string, Tone> = {
   // fleet
   OK: "good", IN_SERVICE: "good", LOCKED: "bad", WARNING: "warn", DEGRADED: "warn", OUT_OF_SERVICE: "bad", MAINTENANCE: "warn",
   PAPER_LOW: "warn", PAPER_OUT: "bad", JAMMED: "bad", OFFLINE: "bad", REVOKED: "bad", DISABLED: "bad",
+  FAULT: "bad", ERROR: "bad", OUT_OF_PAPER: "bad", NOT_PRESENT: "neutral", LOW: "warn", HEALTHY: "good", UNHEALTHY: "bad",
+  ONLINE: "good", POSTED: "good",
 };
 
 export function toneOf(v: string | null | undefined): Tone {
@@ -151,8 +153,8 @@ export function ErrorNote({ error, onRetry }: { error: unknown; onRetry?: () => 
   );
 }
 
-export function Drawer({ open, title, subtitle, onClose, children, footer }: {
-  open: boolean; title: ReactNode; subtitle?: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode;
+export function Drawer({ open, title, subtitle, onClose, children, footer, wide }: {
+  open: boolean; title: ReactNode; subtitle?: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -163,7 +165,7 @@ export function Drawer({ open, title, subtitle, onClose, children, footer }: {
   if (!open) return null;
   return (
     <div className="drawer-wrap" onClick={onClose}>
-      <aside className="drawer" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+      <aside className={`drawer ${wide ? "drawer--wide" : ""}`} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <header className="drawer__head">
           <div>
             <h2 className="drawer__title">{title}</h2>
