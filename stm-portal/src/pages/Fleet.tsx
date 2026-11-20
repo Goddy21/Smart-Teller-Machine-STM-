@@ -553,7 +553,7 @@ function KioskDetail({ t, r, onCommand, menu }: {
       </div>
 
       <ModuleHistory code={t.terminalCode} />
-      <TransactionsTable terminal={t.terminalCode} compact />
+      <TransactionsTable terminal={t.terminalCode} />
     </div>
   );
 }
@@ -561,7 +561,7 @@ function KioskDetail({ t, r, onCommand, menu }: {
 function ModuleHistory({ code }: { code: string }) {
   const { portal } = usePortal();
   const [module, setModule] = useState("");
-  const paging = usePaging("module-history", [code, module], 25);
+  const paging = usePaging("module-history", [code, module]);
   const ev = useLoad(() => portal.moduleEvents(code, { module: module || undefined, page: paging.page, size: paging.size }), [code, module, paging.page, paging.size], 30_000);
   return (
     <Card pad={false} title="Module history" subtitle="Each change of a module’s status, from the kiosk’s health reports"

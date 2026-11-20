@@ -12,9 +12,9 @@ export function Simulator() {
   const dq = useDebounced(q.trim());
   const customers = useLoad(() => portal.simCustomers(dq || undefined), [dq]);
   const gl = useLoad(() => portal.simGl(), [], 15_000);
-  const custPage = useClientPage(customers.data, "sim-customers", [dq], 10);
-  const idPage = useClientPage(sim.data?.identities ?? null, "sim-identities", [], 10);
-  const glPage = useClientPage(gl.data, "sim-gl", [], 10);
+  const custPage = useClientPage(customers.data, "sim-customers", [dq]);
+  const idPage = useClientPage(sim.data?.identities ?? null, "sim-identities", []);
+  const glPage = useClientPage(gl.data, "sim-gl", []);
   const [account, setAccount] = useState<string | null>(null);
   const edit = can.configure(user.role);
 

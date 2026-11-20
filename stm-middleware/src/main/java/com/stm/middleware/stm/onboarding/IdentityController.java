@@ -318,19 +318,34 @@ public class IdentityController {
         if (phoneLost && req.face() == null && !lax) throw Errors.validation("face", "face is required when the code cannot be sent");
         CoreBanking.Customer c = core.customer(req.customerId())
                 .orElseThrow(() -> Errors.notFound("CUSTOMER_NOT_FOUND", "Customer not found", "Mteja hakupatikana"));
-        RegistryRecord r = identity.lookup("NATIONAL_ID", "KEN", c.idNumber())
-                .orElseThrow(() -> Errors.identityMismatch("NOT_FOUND", 0));
+        // The registry record is only the reference for the face (and the fingerprint when the bank holds none).
+        // A customer who is not in it (passport holder, ID typed differently at account opening) is still checked
+        // against the bank's own prints instead of being refused before anything is matched.
+        Optional<RegistryRecord> reg = registryOfCustomer(c);
         long failures = jdbc.sql("SELECT count(*) FROM biometric_checks WHERE customer_id = :c AND session_id = :s AND overall = 'FAIL'")
                 .param("c", c.id()).param("s", ctx.sessionId()).query(Long.class).single();
         if (failures >= MAX_BIOMETRIC_ATTEMPTS) throw Errors.biometricNoMatch(0).detail("offerTeller", true);
-        IdentityServices.MatchResult face = req.face() == null ? null
-                : identity.matchFace(r, Captures.decode("face.image", req.face().image()),
-                    req.face().livenessScore() == null ? 0 : req.face().livenessScore().doubleValue());
+        boolean faceSent = req.face() != null;
+        IdentityServices.MatchResult face = !faceSent ? null
+                : reg.isPresent() ? identity.matchFace(reg.get(), Captures.decode("face.image", req.face().image()),
+                        req.face().livenessScore() == null ? 0 : req.face().livenessScore().doubleValue())
+                : testMode() ? new IdentityServices.MatchResult("MATCH", 0.99)
+                : null;   // no reference photo for this customer: the face is not checked, the thumbprint decides
+        if (phoneLost && face == null && !lax) {
+            // Phone lost: the face is one of the two factors, so it must really be checked.
+            throw Errors.identityMismatch("NO_REFERENCE_PHOTO", 0).detail("offerTeller", true);
+        }
         // The bank's own template when the customer has enrolled; otherwise the national registry (IPRS).
         byte[] template = templateBytes(req);
         Optional<IdentityServices.MatchResult> bank = core.matchEnrolledFingerprint(c.id(), finger(req), template, quality(req));
-        IdentityServices.MatchResult finger = bank.orElseGet(() -> identity.matchFingerprint(r, finger(req), template, quality(req)));
-        String against = bank.isPresent() ? "BANK" : "IPRS";
+        IdentityServices.MatchResult finger = bank.orElseGet(() -> reg
+                .map(rr -> identity.matchFingerprint(rr, finger(req), template, quality(req)))
+                .orElse(testMode() ? new IdentityServices.MatchResult("MATCH", 0.95) : null));
+        if (finger == null) {
+            // Neither the bank nor the registry holds anything to compare against: only a teller can verify.
+            throw Errors.identityMismatch("NO_BIOMETRICS_ON_FILE", 0).detail("offerTeller", true);
+        }
+        String against = bank.isPresent() ? "BANK" : reg.isPresent() ? "IPRS" : "TEST_MODE";
         boolean pass = finger.match() && (face == null || face.match());
         int left = (int) Math.max(0, MAX_BIOMETRIC_ATTEMPTS - failures - (pass ? 0 : 1));
         String checkId = record(ctx, req, null, c.id(), null, face, finger, pass, left, against);
@@ -345,6 +360,9 @@ public class IdentityController {
         audit.session(ctx, "CUSTOMER_VERIFIED", "customerId", c.id(), "method", phoneLost ? "FACE_FINGERPRINT" : "OTP_FINGERPRINT",
                 "checkId", checkId, "fingerprintAgainst", against);
         Map<String, Object> out = response(face, finger, left, token, against);
+        if (faceSent && face == null) {
+            out.put("face", Map.of("result", "NOT_CHECKED", "reason", "NO_REFERENCE_PHOTO"));
+        }
         CoreBanking.Biometrics enrolled = core.biometrics(c.id());
         Map<String, Object> e = new LinkedHashMap<>();
         e.put("enrolled", enrolled.enrolled());
@@ -353,6 +371,20 @@ public class IdentityController {
         out.put("bankEnrolment", e);
         if (phoneLost) out.put("allows", List.of("MOBILE_CHANGE"));
         return out;
+    }
+
+    /** The customer's registry record: Kenyan ID first, then passport; in test mode an unknown one is added. */
+    private Optional<RegistryRecord> registryOfCustomer(CoreBanking.Customer c) {
+        if (c.idNumber() == null || c.idNumber().isBlank()) return Optional.empty();
+        Optional<RegistryRecord> r = identity.lookup("NATIONAL_ID", "KEN", c.idNumber());
+        if (r.isEmpty()) r = identity.lookup("PASSPORT", null, c.idNumber());
+        if (r.isEmpty() && testMode()) {
+            String full = c.fullName() == null ? "" : c.fullName().trim();
+            int sp = full.lastIndexOf(' ');
+            r = identity.registerUnknown("NATIONAL_ID", "KEN", c.idNumber(), null,
+                    sp > 0 ? full.substring(sp + 1) : full, sp > 0 ? full.substring(0, sp) : full, null, null);
+        }
+        return r;
     }
 
     private static byte[] templateBytes(BiometricRequest req) {

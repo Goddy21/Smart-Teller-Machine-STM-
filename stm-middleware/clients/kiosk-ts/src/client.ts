@@ -4,7 +4,7 @@ import type {
   CardOrderRequest, CardView, CashPositions, CassetteView, DepositCounted, DepositCountRequest, DepositCredited,
   DepositOpened, DepositTarget, DepositTargetRequest, DeviceStatus, DeviceToken, Dispensed, DispenseRequest,
   DocumentVerified, DocumentVerifyRequest, EndReason, ErrorCode, FeeQuote, FeeQuoteRequest, FxConfirmed, FxCounted,
-  FxCountRequest, FxExchangeOpened, FxExchangeRequest, FxQuote, FxQuoteRequest, FxRates, HealthAccepted, HealthReport, OperatorSignIn,
+  FxCountRequest, FxExchangeOpened, FxExchangeRequest, FxQuote, FxQuoteRequest, FxRates, HealthAccepted, HealthReport, OperatorSignIn, CustomerSummary,
   JournalUpload, KraResult, KycStatus, SimSwapCheck, KycCaptured, KycRequest, Lang, LookupRequest, LookupResult, Money, Note, OtpSendRequest,
   OpenDepositRequest, OtpSent, OtpVerified, PinSetRequest, PinVerified, PinVerifyRequest, PrintStep, Product, Receipt, ReceiptRequest,
   ReceiptStatus, Reconciliation, Reversal, ReverseRequest, SessionEnded, SessionStarted, SignatureRequest, SmsQueued,
@@ -204,6 +204,11 @@ export class StmClient {
   /** O-2 */
   operatorLogout(operatorRef: string, summary?: string) {
     return this.call<{ signedOut: true }>("POST", "/operators/logout", { operatorRef, summary }, { session: false });
+  }
+
+  /** C-0: accounts, cards and KYC in one call (needs the customer token from B-5). */
+  customerSummary(customerId: string) {
+    return this.call<CustomerSummary>("GET", `/customers/${encodeURIComponent(customerId)}`);
   }
 
   reportHealth(h: HealthReport) {

@@ -4,10 +4,24 @@
 # Only nginx (HTTPS_PORT from .env, 443 by default) and LiveKit media (7881/tcp, 7882/udp) are reachable from the network.
 name: stm
 
+# Resource caps, so the STM never starves the other applications on this shared server. Each value can be raised in
+# .env without editing this file. Logs are rotated (3 x 10 MB per container) instead of growing until the disk is full.
+# Check what each container really uses with:  docker stats --no-stream
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
 services:
   postgres:
     image: postgres:16
     restart: unless-stopped
+    logging: *logging
+    mem_limit: ${PG_MEM:-512m}
+    cpus: ${PG_CPUS:-1.0}
+    # Small-server tuning: the two apps use at most ~20 connections between them.
+    command: ["postgres", "-c", "max_connections=40", "-c", "shared_buffers=96MB", "-c", "effective_cache_size=256MB",
+              "-c", "work_mem=4MB", "-c", "maintenance_work_mem=32MB", "-c", "wal_buffers=4MB",
+              "-c", "log_min_duration_statement=2000"]
     environment:
       POSTGRES_DB: stm
       POSTGRES_USER: stm
@@ -24,13 +38,19 @@ services:
   redis:
     image: redis:7
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    logging: *logging
+    mem_limit: ${REDIS_MEM:-128m}
+    cpus: ${REDIS_CPUS:-0.5}
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "96mb", "--maxmemory-policy", "volatile-lru"]
     volumes: [redisdata:/data]
 
   middleware:
     build:
       context: ../stm-middleware
     restart: unless-stopped
+    logging: *logging
+    mem_limit: ${MIDDLEWARE_MEM:-768m}
+    cpus: ${MIDDLEWARE_CPUS:-1.5}
     depends_on:
       postgres: { condition: service_healthy }
     environment:
@@ -57,7 +77,12 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-Smart Teller Portal <no-reply@stm.local>}
-      JAVA_TOOL_OPTIONS: -Duser.timezone=Africa/Nairobi
+      # Java sizes itself from the container limit above: heap at most 65 % of it, the rest for threads and metadata.
+      JAVA_TOOL_OPTIONS: >-
+        -Duser.timezone=Africa/Nairobi -XX:MaxRAMPercentage=65 -XX:+UseSerialGC -XX:MaxMetaspaceSize=160m
+        -XX:ReservedCodeCacheSize=64m -Xss512k -XX:+ExitOnOutOfMemoryError
+      SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: ${MIDDLEWARE_DB_POOL:-10}
+      SPRING_DATASOURCE_HIKARI_MINIMUMIDLE: "2"
       TZ: Africa/Nairobi
 
   call-control:
@@ -65,6 +90,9 @@ services:
       context: "../Video Conferencing/stm-video"
       dockerfile: ../../deploy/call-control.Dockerfile
     restart: unless-stopped
+    logging: *logging
+    mem_limit: ${CALLCONTROL_MEM:-448m}
+    cpus: ${CALLCONTROL_CPUS:-1.0}
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
@@ -78,11 +106,19 @@ services:
       LIVEKIT_PUBLIC_URL: wss://${PUBLIC_HOST}/livekit
       LIVEKIT_API_URL: http://livekit:7880
       RECORDING_ENABLED: "false"                    # no Egress/MinIO on this server
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=65 -XX:+UseSerialGC -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -Xss512k
+        -XX:+ExitOnOutOfMemoryError
+      SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: "6"
+      SPRING_DATASOURCE_HIKARI_MINIMUMIDLE: "1"
       TZ: Africa/Nairobi
 
   livekit:
     image: livekit/livekit-server:v1.9.1
     restart: unless-stopped
+    logging: *logging
+    mem_limit: ${LIVEKIT_MEM:-512m}
+    cpus: ${LIVEKIT_CPUS:-1.0}
     command: ["--config", "/etc/livekit.yaml"]
     volumes: ["./livekit.yaml:/etc/livekit.yaml:ro,z"]
     ports:
@@ -94,6 +130,9 @@ services:
       context: ../stm-portal
       dockerfile: ../deploy/web.Dockerfile
     restart: unless-stopped
+    logging: *logging
+    mem_limit: ${WEB_MEM:-128m}
+    cpus: ${WEB_CPUS:-0.5}
     depends_on: [middleware, call-control, livekit]
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST}

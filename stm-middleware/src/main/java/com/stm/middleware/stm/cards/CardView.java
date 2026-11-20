@@ -52,7 +52,19 @@ public final class CardView {
             case "BLOCKED", "EXPIRED" -> a.add("REPLACEMENT");
             default -> { }
         }
+        if (renewable(c)) a.add("RENEW");
         return a;
+    }
+
+    /** Expired, or active and expiring within 2 months: a new card can be ordered now (C-5 REPLACEMENT). */
+    static boolean renewable(CardSystem.Card c) {
+        if ("EXPIRED".equals(c.status())) return true;
+        if (!List.of("ACTIVE", "PIN_LOCKED").contains(c.status()) || c.expiry() == null) return false;
+        try {
+            return YearMonth.parse(c.expiry()).isBefore(YearMonth.now().plusMonths(2));
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     static String text(CardSystem.Card c, boolean sw) {

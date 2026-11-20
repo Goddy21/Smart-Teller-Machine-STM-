@@ -308,16 +308,17 @@ export interface Page<T> {
   counts?: Record<string, number> | null;
 }
 
-const PAGE_SIZES = [25, 50, 100];
+const PAGE_SIZES = [10, 25, 50, 100];
+const DEFAULT_PAGE_SIZE = 10;   // every list opens at 10 rows; people can choose more per list
 
 /**
  * Page and page size for one list. The page goes back to 1 when `resetOn` changes (a new filter or search).
  * The size is remembered per list in this browser.
  */
-export function usePaging(key: string, resetOn: unknown[], defaultSize = 25) {
+export function usePaging(key: string, resetOn: unknown[], defaultSize = DEFAULT_PAGE_SIZE) {
   const [page, setPage] = useState(1);
   const [size, setSizeState] = useState(() => {
-    try { const v = Number(localStorage.getItem(`stm.pageSize.${key}`)); return PAGE_SIZES.includes(v) ? v : defaultSize; } catch { return defaultSize; }
+    try { const v = Number(localStorage.getItem(`stm.pageSize.v2.${key}`)); return PAGE_SIZES.includes(v) ? v : defaultSize; } catch { return defaultSize; }
   });
   const first = useRef(true);
   useEffect(() => {
@@ -327,7 +328,7 @@ export function usePaging(key: string, resetOn: unknown[], defaultSize = 25) {
   }, resetOn);
   const setSize = (n: number) => {
     setSizeState(n); setPage(1);
-    try { localStorage.setItem(`stm.pageSize.${key}`, String(n)); } catch { /* per-browser convenience only */ }
+    try { localStorage.setItem(`stm.pageSize.v2.${key}`, String(n)); } catch { /* per-browser convenience only */ }
   };
   return { page, size, setPage, setSize };
 }
@@ -341,7 +342,7 @@ export function pageOf<T>(all: T[], page: number, size: number): Page<T> {
 }
 
 /** Paging for a list the browser already holds (a few hundred rows at most): same Pager, remembered page size. */
-export function useClientPage<T>(all: T[] | null | undefined, key: string, resetOn: unknown[] = [], defaultSize = 25) {
+export function useClientPage<T>(all: T[] | null | undefined, key: string, resetOn: unknown[] = [], defaultSize = DEFAULT_PAGE_SIZE) {
   const p = usePaging(key, resetOn, defaultSize);
   const data = all ? pageOf(all, p.page, p.size) : null;
   return { data, rows: data?.items ?? [], setPage: p.setPage, setSize: p.setSize };

@@ -147,7 +147,10 @@ public class CardController {
         if ("REPLACEMENT".equals(req.service())) {
             if (req.replacesCardId() == null) throw Errors.validation("replacesCardId", "replacesCardId is required");
             CardSystem.Card old = owned.card(ctx, req.replacesCardId());
-            if (!"BLOCKED".equals(old.status()) && !"EXPIRED".equals(old.status()) && !"PIN_LOCKED".equals(old.status())) {
+            // Renewal: an active card expiring within 2 months is replaced without blocking it; it closes when the new
+            // card is activated (C-9).
+            if (!"BLOCKED".equals(old.status()) && !"EXPIRED".equals(old.status()) && !"PIN_LOCKED".equals(old.status())
+                    && !CardView.renewable(old)) {
                 throw Errors.wrongState("Block the old card first (C-10).").detail("cardStatus", old.status());
             }
         } else {
@@ -394,6 +397,15 @@ public class CardController {
         owned.card(ctx, cardId);
         CardSystem.Card card = cms.activate(cardId);
         CoreBanking.Account a = core.account(card.accountId()).orElseThrow();
+        // A renewal: the card it replaces was left working until now; close it.
+        jdbc.sql("SELECT replaces_card_id FROM card_orders WHERE card_id = :c AND replaces_card_id IS NOT NULL ORDER BY created_at DESC LIMIT 1")
+                .param("c", cardId).query(String.class).optional()
+                .flatMap(cms::card)
+                .filter(old -> List.of("ACTIVE", "PIN_LOCKED", "TEMP_BLOCKED").contains(old.status()))
+                .ifPresent(old -> {
+                    cms.destroy(old.id(), "RENEWED");
+                    audit.session(ctx, "CARD_RENEWED", "oldCardId", old.id(), "newCardId", cardId);
+                });
         String ref = jdbc.sql("SELECT reference FROM card_orders WHERE card_id = :c ORDER BY created_at DESC LIMIT 1")
                 .param("c", cardId).query(String.class).optional().orElseGet(() -> refs.next("CRD"));
         String mobile = core.customer(card.customerId()).map(CoreBanking.Customer::mobile).orElse(null);

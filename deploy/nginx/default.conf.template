@@ -18,6 +18,14 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
 
     client_max_body_size 10m;          # ID images and signatures are sent as base64
+
+    # Compress the portal's files (the 1 MB script becomes ~300 KB): much faster over slow or lossy VPN links.
+    # gzip_proxied stays off, so API answers and server-sent event streams pass through untouched.
+    gzip on;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_vary on;
+    gzip_types text/css application/javascript text/javascript application/json image/svg+xml text/plain;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy same-origin always;
 

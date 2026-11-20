@@ -50,7 +50,7 @@ function Journal({ initialEntity }: { initialEntity?: string }) {
   const [open, setOpen] = useState<number | null>(null);
   const types = useLoad(() => portal.eventTypes(), []);
   const kiosks = useLoad(() => portal.registry(), []);
-  const paging = usePaging("audit-journal", [query], 50);
+  const paging = usePaging("audit-journal", [query]);
   const j = useLoad(() => portal.journalPage({
     entityId: query.entity || undefined, eventType: query.type || undefined, terminal: query.terminal || undefined,
     from: query.from || undefined, to: query.to || undefined, page: paging.page, size: paging.size,
@@ -227,7 +227,7 @@ function DeviceJournal() {
   const { portal } = usePortal();
   const [ref, setRef] = useState("");
   const dref = useDebounced(ref.trim());
-  const paging = usePaging("device-journal", [dref], 50);
+  const paging = usePaging("device-journal", [dref]);
   const j = useLoad(() => portal.deviceJournalPage({ ref: dref || undefined, page: paging.page, size: paging.size }), [dref, paging.page, paging.size], 20_000);
   const items = j.data?.items ?? [];
   return (
@@ -264,7 +264,7 @@ function DeviceJournal() {
 /** R-2 and OTP messages, as the SMS gateway received them (codes masked). */
 function SmsLog() {
   const { portal, openSession } = usePortal();
-  const paging = usePaging("sms", [], 50);
+  const paging = usePaging("sms", []);
   const m = useLoad(() => portal.smsPage({ page: paging.page, size: paging.size }), [paging.page, paging.size], 20_000);
   const items = m.data?.items ?? [];
   return (

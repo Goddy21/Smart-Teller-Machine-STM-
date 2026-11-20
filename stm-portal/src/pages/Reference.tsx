@@ -10,9 +10,9 @@ export function Reference() {
   const { portal } = usePortal();
   const ref = useLoad(() => portal.reference(), []);
   const reg = useLoad(() => portal.registry(), []);
-  const products = useClientPage(ref.data?.products ?? null, "ref-products", [], 10);
-  const branches = useClientPage(ref.data?.branches ?? null, "ref-branches", [], 10);
-  const kiosks = useClientPage((reg.data ?? null)?.filter((t) => t.status !== "RETIRED") ?? null, "ref-kiosks", [], 10);
+  const products = useClientPage(ref.data?.products ?? null, "ref-products", []);
+  const branches = useClientPage(ref.data?.branches ?? null, "ref-branches", []);
+  const kiosks = useClientPage((reg.data ?? null)?.filter((t) => t.status !== "RETIRED") ?? null, "ref-kiosks", []);
 
   if (ref.error && !ref.data) return <ErrorNote error={ref.error} onRetry={ref.reload} />;
   if (!ref.data) return <Spinner />;
@@ -75,7 +75,7 @@ export function Reference() {
         </Card>
       </div>
 
-      <div className="grid-2">
+      <div className="grid-2-1 grid-2-1--rev">
         <Card title="Branches" pad={false}>
           <table className="table">
             <thead><tr><th>Code</th><th>Name</th><th className="num">Kiosks</th></tr></thead>

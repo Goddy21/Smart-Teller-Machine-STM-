@@ -3459,6 +3459,47 @@
      ]
     },
     {
+     "name": "C-0 Customer summary (accounts, cards, KYC)",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "X-Device-Id",
+        "value": "{{deviceId}}"
+       },
+       {
+        "key": "X-Request-Id",
+        "value": "{{$guid}}"
+       },
+       {
+        "key": "Accept-Language",
+        "value": "{{lang}}"
+       },
+       {
+        "key": "X-Session-Id",
+        "value": "{{sessionId}}"
+       },
+       {
+        "key": "X-Customer-Token",
+        "value": "{{customerToken}}"
+       }
+      ],
+      "url": {
+       "raw": "{{baseUrl}}/stm/v1/customers/{{customerId}}",
+       "host": [
+        "{{baseUrl}}"
+       ],
+       "path": [
+        "stm",
+        "v1",
+        "customers",
+        "{{customerId}}"
+       ]
+      },
+      "description": "Everything the card journeys need, in the kiosk's CardServicesAccount / CardServicesCard shapes."
+     }
+    },
+    {
      "name": "C-2 Customer's cards",
      "request": {
       "method": "GET",

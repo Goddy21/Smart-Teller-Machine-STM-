@@ -514,3 +514,26 @@ export type KioskMessage =
   | { type: "ANSWER"; sdp: string }
   | { type: "ICE"; candidate: RTCIceCandidateInit | null }
   | { type: "HANGUP" };
+
+/** C-0: the customer with accounts, cards and KYC in one answer (shapes of the kiosk's card journeys). */
+export interface CustomerSummary {
+  customerId: string; fullName: string; nameOnCard: string | null;
+  kyc: { status: "COMPLETE" | "INCOMPLETE" | "EXPIRED"; missing: string[] };
+  accounts: {
+    accountId: string; accountNumber: string; display: string; type: string; productName: string; currency: string;
+    availableBalance: Money; status: "ACTIVE" | "DORMANT" | "FROZEN" | "BLOCKED" | "CLOSED" | (string & {});
+    /** Card types the product allows; empty = never a card on this account. */
+    allowedCardProducts: string[];
+    /** A new card can be ordered on it now; otherwise newCardBlockedReason says why. */
+    newCardAllowed: boolean;
+    newCardBlockedReason: "HAS_CARD" | "NOT_ALLOWED_FOR_PRODUCT" | "ACCOUNT_DORMANT" | "ACCOUNT_FROZEN" | "ACCOUNT_CLOSED" | null;
+  }[];
+  cards: {
+    cardId: string; accountId: string; cardProduct: string; maskedPan: string; expiry: string;
+    status: "ACTIVE" | "INACTIVE" | "HOTLISTED" | "FRAUD_BLOCKED" | "EXPIRED" | "CLOSED";
+    blockReason: string | null; kioskReplaceAllowed: boolean; renewalAtBranch: string | null;
+    /** The gateway's own card state, and what it accepts for this card now. */
+    stmStatus: "ACTIVE" | "INACTIVE_PIN_REQUIRED" | "TEMP_BLOCKED" | "BLOCKED" | "PIN_LOCKED" | "EXPIRED" | (string & {});
+    actions: ("PIN_CHANGE" | "PIN_RESET" | "TEMPORARY_BLOCK" | "UNBLOCK" | "BLOCK_AND_REPLACE" | "REPLACEMENT" | "RENEW" | "NEW_CARD_SETUP")[];
+  }[];
+}

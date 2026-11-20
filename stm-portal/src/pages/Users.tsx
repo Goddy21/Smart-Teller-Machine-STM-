@@ -395,7 +395,7 @@ const EMAIL_TONE: Record<EmailRow["status"], "good" | "bad" | "warn"> = { SENT: 
 /** The last emails. Without a mail server they are simulated: the body (with the code) is shown here instead. */
 function Emails() {
   const { portal } = usePortal();
-  const paging = usePaging("emails", [], 25);
+  const paging = usePaging("emails", []);
   const mails = useLoad(() => portal.emails({ page: paging.page, size: paging.size }), [paging.page, paging.size], 15_000);
   const live = mails.data?.live;
   return (

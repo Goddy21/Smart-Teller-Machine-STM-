@@ -484,7 +484,7 @@ Seen in testing: `409 EXISTING_CUSTOMER`, `422 IDENTITY_MISMATCH`
 
 `POST /stm/v1/identity/biometrics/verify`  ·  needs `X-Session-Id`
 
-Account opening: applicationId + verificationId. Card services: customerId + lookupRef (after the OTP), and the answer carries `customerToken` (source `VERIFIED_IDENTITY`) and `bankEnrolment` `{enrolled, fingers, offerEnrolment}`; the thumbprint is matched against the bank's enrolled prints when there are any (`fingerprint.against: BANK`), otherwise against IPRS. Phone lost: customerId + lookupRef + `"purpose": "MOBILE_CHANGE"` with face **and** fingerprint, no OTP; the token (source `BIOMETRIC_ONLY`, `allows: ["MOBILE_CHANGE"]`) works only for M-4 and M-5. 422 BIOMETRIC_NO_MATCH with `details.attemptsLeft`; at 0 a teller decides in the portal.
+Account opening: applicationId + verificationId. Card services: customerId + lookupRef (after the OTP), and the answer carries `customerToken` (source `VERIFIED_IDENTITY`) and `bankEnrolment` `{enrolled, fingers, offerEnrolment}`; the thumbprint is matched against the bank's enrolled prints when there are any (`fingerprint.against: BANK`), otherwise against IPRS. The face is compared with the registry photo (Kenyan ID, then passport); a customer with no registry record is verified by the bank's prints alone and the answer says `face: {"result": "NOT_CHECKED", "reason": "NO_REFERENCE_PHOTO"}`. No prints with the bank and no registry record: 422 IDENTITY_MISMATCH `result: NO_BIOMETRICS_ON_FILE`, `offerTeller: true`. Phone lost: customerId + lookupRef + `"purpose": "MOBILE_CHANGE"` with face **and** fingerprint, no OTP; the token (source `BIOMETRIC_ONLY`, `allows: ["MOBILE_CHANGE"]`) works only for M-4 and M-5. 422 BIOMETRIC_NO_MATCH with `details.attemptsLeft`; at 0 a teller decides in the portal.
 
 Request:
 ```json
@@ -886,6 +886,89 @@ Response `200`:
     "ADDRESS_UNVERIFIED"
   ],
   "selfServiceAllowed": false
+}
+```
+### C-0 · Customer summary (accounts, cards and KYC in one call)
+
+`GET /stm/v1/customers/{customerId}`  ·  needs `X-Session-Id`, `X-Customer-Token`
+
+Everything the card journeys need after B-5, in the shapes of the kiosk's `CardServicesAccount` / `CardServicesCard`.
+Another customer's id gives 403; a missing or expired token 401 CUSTOMER_TOKEN_INVALID / CUSTOMER_TOKEN_REQUIRED.
+
+- `kyc.status`: COMPLETE, INCOMPLETE or EXPIRED (anything but COMPLETE → "visit a branch"), `kyc.missing`: plain words.
+- `accounts[].allowedCardProducts`: the card types the account's product allows, e.g. `["CLASSIC", "GOLD"]`; empty
+  means this account can never have a card. Whether a new card can be ordered on it **now** is `newCardAllowed`;
+  when false, `newCardBlockedReason` says why: HAS_CARD (it already has a live card), ACCOUNT_DORMANT /
+  ACCOUNT_FROZEN / ACCOUNT_CLOSED, or NOT_ALLOWED_FOR_PRODUCT.
+- `cards[].status` uses the kiosk's set: ACTIVE, INACTIVE (new card waiting for its PIN), HOTLISTED (blocked: lost,
+  stolen, damaged, or temporarily blocked), FRAUD_BLOCKED (reason FRAUD/SUSPICIOUS), EXPIRED, CLOSED.
+- `cards[].stmStatus` is the gateway's own state: ACTIVE, INACTIVE_PIN_REQUIRED, TEMP_BLOCKED (customer can lift it
+  with P-5), BLOCKED (permanent), PIN_LOCKED (works again after a PIN reset), EXPIRED.
+- `cards[].actions` is what the gateway will accept for that card **now**. Use it rather than your own rules:
+
+  | Action | Journey | Call(s) |
+  |---|---|---|
+  | `PIN_CHANGE` | Change PIN (knows it) | P-2 `POST /cards/{id}/pin/change` |
+  | `PIN_RESET` | Forgot / locked PIN | P-3 `POST /cards/{id}/pin/reset` |
+  | `TEMPORARY_BLOCK` | Misplaced, may find it | P-4 `POST /cards/{id}/temporary-block` |
+  | `UNBLOCK` | Found it again | P-5 `POST /cards/{id}/unblock` |
+  | `BLOCK_AND_REPLACE` | Lost, stolen, damaged | C-10 `POST /cards/{id}/block`, then C-4 + C-5 `REPLACEMENT` |
+  | `REPLACEMENT` | Already blocked (incl. fraud), expired or PIN-locked | C-4 + C-5 `REPLACEMENT` with `replacesCardId` |
+  | `RENEW` | Expired, or expiring within 2 months | C-4 + C-5 `REPLACEMENT` with `replacesCardId`, no block needed; the old card keeps working until the new one is activated (C-9), then it is closed |
+  | `NEW_CARD_SETUP` | Activate a card | C-5 `NEW_CARD_SETUP` with `cardId`, then C-8 PIN + C-9 activate |
+
+  An empty list means nothing can be done with that card at the kiosk (send to a teller).
+- `kioskReplaceAllowed`: a replacement can be ordered at the kiosk (`REPLACEMENT`, `BLOCK_AND_REPLACE` or `RENEW` in
+  `actions`). `renewalAtBranch` is null until the bank's card system reports cards waiting at a branch.
+
+**Test customer for every card journey** (simulated bank): Patrick Musonye Tendwa, `CIF00900001`, ID `33445566`,
+look up by account `0190000105`, code `123456`, fingerprints on file (`RIGHT_THUMB`, `LEFT_THUMB`), card PINs `2468`.
+
+| Account | Card | For |
+|---|---|---|
+| 0190000105 | none | New card |
+| 0190000101 | `crd_T001` ACTIVE | Lost / stolen / damaged |
+| 0190000102 | `crd_T002` ACTIVE, expires next month (kept current at every restart) | Renew |
+| 0190000103 | `crd_T003` FRAUD_BLOCKED | Fraud |
+| 0190000104 | `crd_T004` INACTIVE | Activate a card |
+
+Response `200`:
+```json
+{
+  "customerId": "CIF00204417",
+  "fullName": "Mary Njoki Kariuki",
+  "nameOnCard": "MARY N KARIUKI",
+  "kyc": { "status": "COMPLETE", "missing": [] },
+  "accounts": [
+    {
+      "accountId": "acc_M1SV",
+      "accountNumber": "0124417001",
+      "display": "••• 7001",
+      "type": "SAVINGS",
+      "productName": "Personal Savings Account",
+      "currency": "KES",
+      "availableBalance": { "amount": "48200.00", "currency": "KES" },
+      "status": "ACTIVE",
+      "allowedCardProducts": ["CLASSIC", "GOLD"],
+      "newCardAllowed": false,
+      "newCardBlockedReason": "HAS_CARD"
+    }
+  ],
+  "cards": [
+    {
+      "cardId": "crd_8103",
+      "accountId": "acc_M2CU",
+      "cardProduct": "CLASSIC",
+      "maskedPan": "•••• 8103",
+      "expiry": "2028-02",
+      "status": "HOTLISTED",
+      "blockReason": "MISPLACED",
+      "kioskReplaceAllowed": true,
+      "renewalAtBranch": null,
+      "stmStatus": "TEMP_BLOCKED",
+      "actions": ["UNBLOCK", "BLOCK_AND_REPLACE"]
+    }
+  ]
 }
 ```
 ### C-2 · Customer's cards

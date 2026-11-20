@@ -36,7 +36,7 @@ export function Transactions() {
 }
 
 /** The transactions list. With `terminal` it shows one kiosk only (kiosk detail). */
-export function TransactionsTable({ terminal, compact }: { terminal?: string; compact?: boolean }) {
+export function TransactionsTable({ terminal }: { terminal?: string }) {
   const { portal } = usePortal();
   const [kind, setKind] = useState<(typeof KIND_TABS)[number]>("");
   const [status, setStatus] = useState("");
@@ -50,7 +50,7 @@ export function TransactionsTable({ terminal, compact }: { terminal?: string; co
   const query: TxQuery = { kind: kind || undefined, status: status || undefined, terminal: (terminal ?? kiosk) || undefined,
     from: range.from || undefined, to: range.to || undefined, q: dq || undefined };
   const key = JSON.stringify(query);
-  const paging = usePaging(terminal ? "kiosk-tx" : "transactions", [key], compact ? 25 : 50);
+  const paging = usePaging(terminal ? "kiosk-tx" : "transactions", [key]);
   const tx = useLoad(() => portal.transactionsPage({ ...query, page: paging.page, size: paging.size }), [key, paging.page, paging.size], 15_000);
   const rows = tx.data?.items ?? [];
   const counts = tx.data?.counts ?? {};
