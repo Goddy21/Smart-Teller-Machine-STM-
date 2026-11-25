@@ -40,7 +40,9 @@ public interface CoreBanking {
     record KycProfile(OffsetDateTime lastReviewedAt, String riskRating, boolean pep, String sanctions, List<String> flags) {}
 
     /** The bank's own fingerprint enrolment for a customer (none for customers who never enrolled). */
-    record Biometrics(boolean enrolled, List<String> fingers, OffsetDateTime enrolledAt, String source) {}
+    /** fingers: the bank's fingerprint templates; faceOnFile: the bank holds a reference photo (account opening). */
+    record Biometrics(boolean enrolled, List<String> fingers, OffsetDateTime enrolledAt, String source,
+                      boolean faceOnFile, String faceSource) {}
 
     record FingerTemplate(String finger, byte[] template, int quality) {}
 
@@ -49,7 +51,9 @@ public interface CoreBanking {
 
     record SignatureImage(byte[] content, String mimeType) {}
 
-    record NewCustomer(String idNumber, String fullName, String firstName, String mobile, String kraPin, String addressJson) {}
+    /** profileJson: occupation, employer, monthlyIncome, sourceOfFunds and nextOfKin from "Your details" (B-8). */
+    record NewCustomer(String idNumber, String fullName, String firstName, String mobile, String kraPin, String addressJson,
+                       String email, String profileJson) {}
 
     record Opened(String customerId, Account account) {}
 
@@ -107,6 +111,12 @@ public interface CoreBanking {
 
     /** Matches a live fingerprint against the bank's enrolled template. Empty when the customer is not enrolled. */
     Optional<IdentityServices.MatchResult> matchEnrolledFingerprint(String customerId, String finger, byte[] template, int quality);
+
+    /** Stores the bank's reference photo of the customer (replacing an earlier one). */
+    void enrolFace(String customerId, byte[] image, String source);
+
+    /** Matches a live face against the bank's reference photo. Empty when the bank holds none. */
+    Optional<IdentityServices.MatchResult> matchEnrolledFace(String customerId, byte[] image, double livenessScore);
 
     Optional<Signature> signature(String customerId);
 

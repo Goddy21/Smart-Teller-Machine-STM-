@@ -919,6 +919,47 @@
      ]
     },
     {
+     "name": "B-8b Choices for Your details (source of funds, income, relationships)",
+     "request": {
+      "method": "GET",
+      "header": [
+       {
+        "key": "X-Device-Id",
+        "value": "{{deviceId}}"
+       },
+       {
+        "key": "X-Request-Id",
+        "value": "{{$guid}}"
+       },
+       {
+        "key": "Accept-Language",
+        "value": "{{lang}}"
+       },
+       {
+        "key": "X-Session-Id",
+        "value": "{{sessionId}}"
+       },
+       {
+        "key": "Idempotency-Key",
+        "value": "{{$guid}}"
+       }
+      ],
+      "url": {
+       "raw": "{{baseUrl}}/stm/v1/onboarding/kyc-options",
+       "host": [
+        "{{baseUrl}}"
+       ],
+       "path": [
+        "stm",
+        "v1",
+        "onboarding",
+        "kyc-options"
+       ]
+      },
+      "description": ""
+     }
+    },
+    {
      "name": "B-8 KYC details",
      "request": {
       "method": "PATCH",
@@ -961,7 +1002,7 @@
       "description": "",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"kraPin\": \"A029876543K\",\n  \"mobile\": \"0712 345 678\",\n  \"address\": {\n    \"line1\": \"Moi Avenue\",\n    \"town\": \"Nairobi\",\n    \"county\": \"Nairobi\"\n  },\n  \"occupation\": \"Teacher\",\n  \"sourceOfFunds\": \"Salary\"\n}",
+       "raw": "{\n  \"kraPin\": \"A029876543K\",\n  \"mobile\": \"0712 345 678\",\n  \"address\": {\n    \"line1\": \"Moi Avenue\",\n    \"town\": \"Nairobi\",\n    \"county\": \"Nairobi\",\n    \"subCounty\": \"Dagoretti North\",\n    \"ward\": \"Kilimani\",\n    \"poBox\": \"1234-00100\"\n  },\n  \"occupation\": \"Teacher\",\n  \"sourceOfFunds\": \"Salary\",\n  \"email\": \"amara@example.com\",\n  \"employer\": \"Self-employed: Amara Tailoring\",\n  \"monthlyIncome\": \"10K_50K\",\n  \"nextOfKin\": {\n    \"fullName\": \"Grace Wanjiru Kamau\",\n    \"relationship\": \"Sister\",\n    \"mobile\": \"0722 111 222\"\n  }\n}",
        "options": {
         "raw": {
          "language": "json"
@@ -2086,7 +2127,7 @@
       "description": "",
       "body": {
        "mode": "raw",
-       "raw": "{\n  \"kraPin\": \"A030222333N\",\n  \"mobile\": \"0722 000 111\",\n  \"address\": {\n    \"line1\": \"Kenyatta Ave\",\n    \"town\": \"Nakuru\"\n  }\n}",
+       "raw": "{\n  \"kraPin\": \"A030222333N\",\n  \"mobile\": \"0722 000 111\",\n  \"address\": {\n    \"line1\": \"Kenyatta Ave\",\n    \"town\": \"Nakuru\",\n    \"subCounty\": \"Dagoretti North\",\n    \"ward\": \"Kilimani\",\n    \"poBox\": \"1234-00100\"\n  },\n  \"email\": \"amara@example.com\",\n  \"occupation\": \"Teacher\",\n  \"employer\": \"Self-employed: Amara Tailoring\",\n  \"sourceOfFunds\": \"BUSINESS\",\n  \"monthlyIncome\": \"10K_50K\",\n  \"nextOfKin\": {\n    \"fullName\": \"Grace Wanjiru Kamau\",\n    \"relationship\": \"Sister\",\n    \"mobile\": \"0722 111 222\"\n  }\n}",
        "options": {
         "raw": {
          "language": "json"

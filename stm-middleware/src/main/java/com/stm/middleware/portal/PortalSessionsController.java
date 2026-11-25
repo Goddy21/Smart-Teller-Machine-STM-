@@ -114,7 +114,7 @@ public class PortalSessionsController {
                 FROM identity_verifications WHERE session_id = :s ORDER BY created_at""", p));
         s.put("biometrics", rows.list("""
                 SELECT id, application_id, customer_id, face_result, face_score, liveness_score, finger, finger_result,
-                       finger_score, finger_quality, overall, attempts_left, created_at
+                       finger_score, finger_quality, overall, attempts_left, face_against, matched_against, created_at
                 FROM biometric_checks WHERE session_id = :s ORDER BY created_at""", p));
         s.put("cardOrders", rows.list("""
                 SELECT id, service, account_id, card_product, name_on_card, masked_pan, card_id, fee_amount, fee_posted, fee_ref,
@@ -172,6 +172,8 @@ public class PortalSessionsController {
             out.put("fingers", bio.fingers());
             out.put("biometricsSource", bio.source());
             out.put("biometricsEnrolledAt", bio.enrolledAt());
+            out.put("faceOnFile", bio.faceOnFile());
+            out.put("faceSource", bio.faceSource());
             out.put("signatureOnFile", sig.isPresent());
             out.put("signatureSource", sig.map(com.stm.middleware.backend.CoreBanking.Signature::source).orElse(null));
             out.put("signatureCapturedAt", sig.map(com.stm.middleware.backend.CoreBanking.Signature::capturedAt).orElse(null));
@@ -270,6 +272,7 @@ public class PortalSessionsController {
                        a.consents AS consents_json, a.accepted_at, a.status, a.verification_id, a.identity_attempts,
                        a.biometrics_passed, a.biometric_attempts, a.identity_confirmed, a.full_name, a.id_number, a.kra_pin,
                        a.mobile, a.address AS address_json, a.occupation, a.source_of_funds, a.screening AS screening_json,
+                       a.email, a.employer, a.monthly_income, a.next_of_kin AS next_of_kin_json,
                        a.otp_verified, a.signature_id, a.customer_id, a.account_id, a.account_number, a.card_product,
                        a.name_on_card, a.reference, a.referral_status, a.teller_override, a.decided_by, a.decided_at,
                        a.decision_notes, a.cancel_reason, a.cancelled_at_step, a.created_at, a.updated_at, a.expires_at

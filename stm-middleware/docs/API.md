@@ -28,8 +28,8 @@ Each endpoint below says which of the last three it needs.
 {
   "error": {
     "code": "BIOMETRIC_NO_MATCH",
-    "message": "Your face or thumbprint did not match the registry record.",
-    "messageSw": "Uso au alama ya kidole chako haikulingana na rekodi ya sajili.",
+    "message": "Your face or thumbprint did not match our records.",
+    "messageSw": "Uso au alama ya kidole chako haikulingana na rekodi zetu.",
     "retryable": true,
     "requestId": "6f1c…",
     "details": { "attemptsLeft": 2 }
@@ -484,7 +484,7 @@ Seen in testing: `409 EXISTING_CUSTOMER`, `422 IDENTITY_MISMATCH`
 
 `POST /stm/v1/identity/biometrics/verify`  ·  needs `X-Session-Id`
 
-Account opening: applicationId + verificationId. Card services: customerId + lookupRef (after the OTP), and the answer carries `customerToken` (source `VERIFIED_IDENTITY`) and `bankEnrolment` `{enrolled, fingers, offerEnrolment}`; the thumbprint is matched against the bank's enrolled prints when there are any (`fingerprint.against: BANK`), otherwise against IPRS. The face is compared with the registry photo (Kenyan ID, then passport); a customer with no registry record is verified by the bank's prints alone and the answer says `face: {"result": "NOT_CHECKED", "reason": "NO_REFERENCE_PHOTO"}`. No prints with the bank and no registry record: 422 IDENTITY_MISMATCH `result: NO_BIOMETRICS_ON_FILE`, `offerTeller: true`. Phone lost: customerId + lookupRef + `"purpose": "MOBILE_CHANGE"` with face **and** fingerprint, no OTP; the token (source `BIOMETRIC_ONLY`, `allows: ["MOBILE_CHANGE"]`) works only for M-4 and M-5. 422 BIOMETRIC_NO_MATCH with `details.attemptsLeft`; at 0 a teller decides in the portal.
+Account opening: applicationId + verificationId. Card services: customerId + lookupRef (after the OTP), and the answer carries `customerToken` (source `VERIFIED_IDENTITY`) and `bankEnrolment` `{enrolled, fingers, faceOnFile, offerEnrolment}`; `fingerprint.image` (optional, PNG/JPEG preview of the print) and the real `fingerprint.quality` (0–100) and `face.livenessScore` (0–1) from the devices are shown to staff in the portal, so please send them; the thumbprint is matched against the bank's enrolled prints when there are any (`fingerprint.against: BANK`), otherwise against IPRS. The face is compared with the bank's own photo of the customer when there is one, i.e. the face that passed at account opening (`face.against: BANK_PHOTO`), otherwise with the registry photo (Kenyan ID, then passport, `IPRS_PHOTO`); a customer with neither is verified by the bank's prints alone and the answer says `face: {"result": "NOT_CHECKED", "reason": "NO_REFERENCE_PHOTO"}`. No prints with the bank and no registry record: 422 IDENTITY_MISMATCH `result: NO_BIOMETRICS_ON_FILE`, `offerTeller: true`. Phone lost: customerId + lookupRef + `"purpose": "MOBILE_CHANGE"` with face **and** fingerprint, no OTP; the token (source `BIOMETRIC_ONLY`, `allows: ["MOBILE_CHANGE"]`) works only for M-4 and M-5. 422 BIOMETRIC_NO_MATCH with `details.attemptsLeft`; at 0 a teller decides in the portal.
 
 Request:
 ```json
@@ -566,22 +566,48 @@ Response `200`:
 ```
 Seen in testing: `422 KRA_PIN_INVALID`
 
-### B-8 · KYC details (B6)
+### B-8 · Your details (B6): contact, address, work and income, next of kin
 
 `PATCH /stm/v1/onboarding/applications/{applicationId}/kyc`  ·  needs `X-Session-Id`
 
-Screening runs here. `status: REFERRED` = wait for the portal decision (poll B-13) or offer a teller.
+Save each "Your details" page as the customer finishes it; every field is optional and fields left out keep what was
+saved before (an empty string clears one). The details are **complete** once `kraPin`, `mobile` and an address
+(`line1` or `county`) are on file: then screening runs and the status becomes `KYC_CAPTURED`, or `REFERRED` (wait for
+the portal decision, poll B-13, or offer a teller). Before that the answer says `complete: false` and what is `missing`.
+Sending everything in one call, as before, still works.
 
-Request:
+| Page | Fields |
+|---|---|
+| 1 · Contact details and address | `kraPin`, `mobile`, `email`, `address.county`, `address.subCounty`, `address.ward` |
+| 2 · Address, work and income | `address.line1` (estate, street or landmark), `address.poBox` (optional, e.g. `1234-00100`), `occupation`, `employer` (or "Self-employed: business name"), `sourceOfFunds`, `monthlyIncome` |
+| 3 · Next of kin | `nextOfKin.fullName`, `nextOfKin.relationship` (free text, e.g. "Sister"), `nextOfKin.mobile` |
+
+`sourceOfFunds` and `monthlyIncome` take the codes from B-8b. Please send the code (e.g. `50K_100K`). The label shown on the kiosk is also accepted, and so is any form that names the band's amounts (`KES 50,001 - 100,000`, `50001-100000`, `OVER_500000`); a single amount is put in the band that contains it.
+400 VALIDATION_ERROR for a bad `email`, `monthlyIncome` or phone number (`details.field`); 422 KRA_PIN_INVALID.
+
+Request (page 1):
 ```json
 {
   "kraPin": "A029876543K",
   "mobile": "0712 345 678",
-  "address": {
-    "line1": "Moi Avenue",
-    "town": "Nairobi",
-    "county": "Nairobi"
-  }
+  "email": "amara@example.com",
+  "address": { "county": "Nairobi", "subCounty": "Dagoretti North", "ward": "Kilimani" }
+}
+```
+Request (page 2):
+```json
+{
+  "address": { "line1": "Fedha Estate, Block 4", "poBox": "1234-00100" },
+  "occupation": "Teacher",
+  "employer": "Self-employed: Amara Tailoring",
+  "sourceOfFunds": "BUSINESS",
+  "monthlyIncome": "10K_50K"
+}
+```
+Request (page 3):
+```json
+{
+  "nextOfKin": { "fullName": "Grace Wanjiru Kamau", "relationship": "Sister", "mobile": "0722 111 222" }
 }
 ```
 Response `200`:
@@ -589,10 +615,42 @@ Response `200`:
 {
   "applicationId": "app_PS03612K55WY",
   "status": "KYC_CAPTURED",
-  "screening": {
-    "pep": "CLEAR",
-    "sanctions": "CLEAR"
-  }
+  "complete": true,
+  "missing": [],
+  "screening": { "pep": "CLEAR", "sanctions": "CLEAR" }
+}
+```
+Not complete yet: `{"applicationId": "app_…", "status": "IDENTITY_VERIFIED", "complete": false, "missing": ["kraPin"]}`.
+
+### B-8b · Choices for "Your details"
+
+`GET /stm/v1/onboarding/kyc-options`  ·  no session needed
+
+The pickers' options, with the code to send back and labels in English and Kiswahili.
+
+Response `200`:
+```json
+{
+  "sourceOfFunds": [
+    { "code": "SALARY", "label": "Salary or wages", "labelSw": "Mshahara au ujira" },
+    { "code": "BUSINESS", "label": "Business income", "labelSw": "Mapato ya biashara" },
+    { "code": "FARMING", "label": "Farming", "labelSw": "Kilimo" },
+    { "code": "REMITTANCES", "label": "Money from family or abroad", "labelSw": "Pesa kutoka kwa familia au ng'ambo" },
+    { "code": "PENSION", "label": "Pension", "labelSw": "Pensheni" },
+    { "code": "SAVINGS_INVESTMENTS", "label": "Savings or investments", "labelSw": "Akiba au uwekezaji" },
+    { "code": "OTHER", "label": "Other", "labelSw": "Nyingine" }
+  ],
+  "monthlyIncome": [
+    { "code": "UP_TO_10K", "label": "Up to KES 10,000", "labelSw": "Hadi KES 10,000" },
+    { "code": "10K_50K", "label": "KES 10,001 – 50,000", "labelSw": "KES 10,001 – 50,000" },
+    { "code": "50K_100K", "label": "KES 50,001 – 100,000", "labelSw": "KES 50,001 – 100,000" },
+    { "code": "100K_500K", "label": "KES 100,001 – 500,000", "labelSw": "KES 100,001 – 500,000" },
+    { "code": "OVER_500K", "label": "Over KES 500,000", "labelSw": "Zaidi ya KES 500,000" }
+  ],
+  "relationships": [
+    { "code": "SPOUSE", "label": "Spouse", "labelSw": "Mwenzi" },
+    { "code": "SIBLING", "label": "Brother or sister", "labelSw": "Ndugu" }
+  ]
 }
 ```
 ### B-9 · Send OTP (B7)
@@ -701,11 +759,12 @@ Response `201`:
   "smsSent": true,
   "mandate": {
     "signatureRegistered": true,
-    "biometricsEnrolled": true
+    "biometricsEnrolled": true,
+    "faceEnrolled": true
   }
 }
 ```
-`mandate`: the signature (B-11) and the thumbprint that passed B-5 were stored in core banking with the account.
+`mandate`: the signature (B-11), and the face photo and thumbprint that passed B-5, were stored with the bank with the account. Later visits (card services, phone change) compare the customer's face and finger with these first.
 
 Seen in testing: `409 IDEMPOTENCY_CONFLICT`
 
@@ -818,6 +877,8 @@ Seen in testing: `401 PIN_INCORRECT`
 
 `by`: ACCOUNT_NUMBER (accountNumber) or ID_DOCUMENT (documentType, documentNumber). Then B-9/B-10 with lookupRef and B-5 with customerId + lookupRef.
 
+**Which finger to ask for:** `enrolledFingers` are the fingers the bank holds for this customer (the one scanned at account opening, or enrolled at a kiosk or branch). Prompt for `fingerToScan` ("Place your right thumb on the scanner") and send that value as `fingerprint.finger` in B-5, so the print is matched against the bank's own template. A finger the bank does not hold is matched against the national registry instead. `bankFaceOnFile: true` means B-5 compares the face with the bank's photo from account opening.
+
 Request:
 ```json
 {
@@ -834,8 +895,14 @@ Response `200`:
   "maskedMobile": "+254 7•• ••• 678",
   "accountsFound": 3,
   "verificationRequired": [
-    "OTP"
-  ]
+    "OTP",
+    "FINGERPRINT"
+  ],
+  "enrolledFingers": [
+    "RIGHT_THUMB"
+  ],
+  "fingerToScan": "RIGHT_THUMB",
+  "bankFaceOnFile": true
 }
 ```
 ### — · SIM-swap check

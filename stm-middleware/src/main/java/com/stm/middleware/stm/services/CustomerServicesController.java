@@ -97,6 +97,7 @@ public class CustomerServicesController {
         b.put("fingers", bio.fingers());
         b.put("enrolledAt", bio.enrolledAt());
         b.put("source", bio.source());
+        b.put("faceOnFile", bio.faceOnFile());
         out.put("biometrics", b);
 
         Map<String, Object> s = new LinkedHashMap<>();

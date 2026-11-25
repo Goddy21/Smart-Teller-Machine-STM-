@@ -27,6 +27,9 @@ public class StmErrorHandler {
     @ExceptionHandler(StmException.class)
     ResponseEntity<Map<String, Object>> stm(StmException e, HttpServletRequest req) {
         if (e.status().is5xxServerError()) log.warn("{} {}: {}", req.getMethod(), req.getRequestURI(), e.code());
+        else log.info("Refused {} {} -> {} {} \"{}\" (kiosk {}, session {}, request {})", req.getMethod(), req.getRequestURI(),
+                e.status().value(), e.code(), e.getMessage(), req.getHeader("X-Device-Id"),
+                req.getHeader("X-Session-Id") == null ? "none" : req.getHeader("X-Session-Id"), RequestIds.of(req));
         RequestIds.noteError(req, e);
         return ResponseEntity.status(e.status()).body(ErrorBodies.body(e, RequestIds.of(req)));
     }

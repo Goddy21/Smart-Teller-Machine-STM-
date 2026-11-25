@@ -246,6 +246,25 @@ export function SessionBody({ s, timeline, compact = false, onChange }: {
 
       {!compact && s.customerId && s.customerRecord && <OnFile customerId={s.customerId} r={s.customerRecord} />}
 
+      {s.biometrics.some((b) => !b.applicationId) && (
+        <div className="section">
+          <div className="h3 with-icon"><IconFingerprint /> Identity checks</div>
+          <table className="table table--dense">
+            <thead><tr><th>Face</th><th>Fingerprint</th><th>Result</th><th>When</th></tr></thead>
+            <tbody>
+              {s.biometrics.filter((b) => !b.applicationId).map((b) => (
+                <tr key={b.id}>
+                  <td>{b.faceResult ? <><Badge value={b.faceResult} /><small className="muted"><br />against {label(AGAINST_LABEL, b.faceAgainst ?? "IPRS_PHOTO")}</small></> : <span className="muted">Not checked</span>}</td>
+                  <td><Badge value={b.fingerResult} /><small className="muted"><br />{fmt.words(b.finger)} against {label(AGAINST_LABEL, b.matchedAgainst)}</small></td>
+                  <td><Badge value={b.overall} />{b.overall === "FAIL" && <small className="muted"><br />{b.attemptsLeft} attempts left</small>}</td>
+                  <td className="muted">{fmt.dateTime(b.createdAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {s.statements.length > 0 && (
         <div className="section">
           <div className="h3 with-icon"><IconFile /> Statements</div>
@@ -402,9 +421,9 @@ export function ApplicationPanel({ a, s, onChange, compact = false }: {
       {(last || a.biometricAttempts > 0) && (
         <div className="bio mt">
           <BioTile icon={<IconFace />} label="Face" result={last?.faceResult ?? null}
-                   note={last?.faceScore != null ? `score ${last.faceScore.toFixed(2)} · liveness ${last.livenessScore?.toFixed(2) ?? "—"}` : undefined} />
+                   note={last?.faceScore != null ? `score ${last.faceScore.toFixed(2)} · liveness ${last.livenessScore ? last.livenessScore.toFixed(2) : "not sent"}` : undefined} />
           <BioTile icon={<IconFingerprint />} label="Fingerprint" result={last?.fingerResult ?? null}
-                   note={last ? `${fmt.words(last.finger)} · quality ${last.fingerQuality}` : undefined} />
+                   note={last ? `${fmt.words(last.finger)} · quality ${last.fingerQuality ? last.fingerQuality : "not sent"}` : undefined} />
           <BioTile icon={<IconShield />} label="Attempts" result={a.biometricsPassed ? "PASS" : a.biometricAttempts >= 3 ? "FAIL" : null}
                    note={`${a.biometricAttempts} failed of 3${a.tellerOverride ? ` · ${fmt.words(a.tellerOverride)}` : ""}`} />
         </div>
@@ -414,10 +433,24 @@ export function ApplicationPanel({ a, s, onChange, compact = false }: {
         <div className="fields fields--3 mt">
           {a.screening && <Field label="Sanctions"><Badge value={a.screening.sanctions} /></Field>}
           {a.screening && <Field label="PEP"><Badge value={a.screening.pep}>{a.screening.pep === "HIT" ? "Possible match" : "Clear"}</Badge></Field>}
-          {a.address && <Field label="Address">{[a.address.line1, a.address.town, a.address.county].filter(Boolean).join(", ")}</Field>}
+          {a.address && <Field label="Address">{[a.address.line1, a.address.ward, a.address.subCounty, a.address.town, a.address.county].filter(Boolean).join(", ") || "—"}
+            {a.address.poBox && <small className="muted"><br />P.O. Box {a.address.poBox}</small>}</Field>}
           {a.accountNumber && <Field label="Account number"><Mono>{a.accountNumber}</Mono></Field>}
           {a.customerId && <Field label="Customer (CIF)"><Mono>{a.customerId}</Mono></Field>}
           {a.cardProduct && <Field label="Card">{fmt.words(a.cardProduct)} · {a.nameOnCard}</Field>}
+        </div>
+      )}
+
+      {!compact && (a.email || a.occupation || a.employer || a.sourceOfFunds || a.monthlyIncome || a.nextOfKin) && (
+        <div className="fields fields--3 mt">
+          <Field label="E-mail">{a.email ?? "—"}</Field>
+          <Field label="Occupation">{a.occupation ?? "—"}</Field>
+          <Field label="Employer or business">{a.employer ?? "—"}</Field>
+          <Field label="Source of funds">{a.sourceOfFunds ? (FUNDS[a.sourceOfFunds] ?? a.sourceOfFunds) : "—"}</Field>
+          <Field label="Monthly income">{a.monthlyIncome ? (INCOME[a.monthlyIncome] ?? a.monthlyIncome) : "—"}</Field>
+          <Field label="Next of kin">{a.nextOfKin?.fullName
+            ? <>{a.nextOfKin.fullName}{a.nextOfKin.relationship && <> ({a.nextOfKin.relationship})</>}{a.nextOfKin.mobile && <small className="muted"><br />{a.nextOfKin.mobile}</small>}</>
+            : "—"}</Field>
         </div>
       )}
 
@@ -434,6 +467,20 @@ export function ApplicationPanel({ a, s, onChange, compact = false }: {
     </div>
   );
 }
+
+const FUNDS: Record<string, string> = {
+  SALARY: "Salary or wages", BUSINESS: "Business income", FARMING: "Farming", REMITTANCES: "Money from family or abroad",
+  PENSION: "Pension", SAVINGS_INVESTMENTS: "Savings or investments", OTHER: "Other",
+};
+const INCOME: Record<string, string> = {
+  UP_TO_10K: "Up to KES 10,000", "10K_50K": "KES 10,001 – 50,000", "50K_100K": "KES 50,001 – 100,000",
+  "100K_500K": "KES 100,001 – 500,000", OVER_500K: "Over KES 500,000",
+};
+
+const AGAINST_LABEL: Record<string, string> = {
+  BANK_PHOTO: "the bank's photo", IPRS_PHOTO: "the national registry photo",
+  BANK: "the bank's fingerprint", IPRS: "the national registry", TEST_MODE: "nothing (test mode)",
+};
 
 function BioTile({ icon, label: l, result, note }: { icon: ReactNode; label: string; result: string | null; note?: string }) {
   const tone = result === "MATCH" || result === "PASS" ? "good" : result === "NO_MATCH" || result === "FAIL" ? "bad" : "warn";
@@ -485,11 +532,16 @@ function OnFile({ customerId, r }: { customerId: string; r: CustomerRecord }) {
   return (
     <div className="section">
       <div className="h3 with-icon"><IconFingerprint /> On file with the bank</div>
-      <div className="fields fields--3">
+      <div className="fields fields--2">
         <Field label="Fingerprints">
           {r.biometricsEnrolled
             ? <><Badge tone="good">Enrolled</Badge><small className="muted"><br />{(r.fingers ?? []).map((f) => fmt.words(f)).join(", ")} · {label(SOURCE_LABEL, r.biometricsSource)}</small></>
             : <><Badge tone="warn">Not enrolled</Badge><small className="muted"><br />Checked against the national registry only</small></>}
+        </Field>
+        <Field label="Face photo">
+          {r.faceOnFile
+            ? <><Badge tone="good">On file</Badge><small className="muted"><br />Taken {label(SOURCE_LABEL, r.faceSource)}</small></>
+            : <><Badge tone="warn">None on file</Badge><small className="muted"><br />Checked against the national registry photo</small></>}
         </Field>
         <Field label="Specimen signature">
           {r.signatureOnFile

@@ -182,9 +182,11 @@ export interface BiometricRequest {
   /** Phone lost (no code possible): send face AND fingerprint. The token then only allows the number change (M-4, M-5). */
   purpose?: "MOBILE_CHANGE";
   face?: { image: string; livenessScore: number; livenessVendor?: string };
-  fingerprint?: { finger: Finger; template?: string; quality: number };
+  /** image: optional PNG/JPEG preview of the print, shown to staff in the portal. */
+  fingerprint?: { finger: Finger; template?: string; quality: number; image?: string };
 }
 export interface BiometricResult {
+  /** against: "BANK_PHOTO" (photo from account opening), "IPRS_PHOTO" (national registry) or "TEST_MODE". */
   face?: { against: string; score: number; result: "MATCH" | "NO_MATCH" };
   fingerprint?: { against: string; score: number; result: "MATCH" | "NO_MATCH" };
   overall: "PASS" | "FAIL";
@@ -192,7 +194,7 @@ export interface BiometricResult {
   /** Card services (customerId + lookupRef, after the OTP): the token that unlocks C-2 … C-10. */
   customerToken?: string;
   /** Returning customers: are their fingerprints already with the bank? offerEnrolment true: offer M-3. */
-  bankEnrolment?: { enrolled: boolean; fingers: Finger[]; offerEnrolment: boolean };
+  bankEnrolment?: { enrolled: boolean; fingers: Finger[]; faceOnFile: boolean; offerEnrolment: boolean };
   /** Set after the phone-lost check: the only thing this token may do. */
   allows?: "MOBILE_CHANGE"[];
 }
@@ -202,11 +204,26 @@ export type Finger = "RIGHT_THUMB" | "LEFT_THUMB" | "RIGHT_INDEX" | "LEFT_INDEX"
 export interface KraResult { valid: boolean; taxpayerName: string; matchesId: boolean; status: string }
 
 /** B-8 */
+/** B-8: every field optional; send each "Your details" page as it is finished. */
 export interface KycRequest {
-  kraPin: string; mobile: string; address: { line1: string; town?: string; county?: string };
-  occupation?: string; sourceOfFunds?: string;
+  kraPin?: string; mobile?: string; email?: string;
+  address?: { line1?: string; town?: string; county?: string; subCounty?: string; ward?: string; poBox?: string };
+  occupation?: string; employer?: string;
+  /** Code from B-8b (SALARY, BUSINESS, FARMING, REMITTANCES, PENSION, SAVINGS_INVESTMENTS, OTHER). */
+  sourceOfFunds?: string;
+  /** Code from B-8b (UP_TO_10K, 10K_50K, 50K_100K, 100K_500K, OVER_500K). */
+  monthlyIncome?: string;
+  nextOfKin?: { fullName?: string; relationship?: string; mobile?: string };
 }
-export interface KycCaptured { applicationId: string; status: ApplicationStatus; screening: { pep: "CLEAR" | "HIT"; sanctions: "CLEAR" | "HIT" } }
+export interface KycCaptured {
+  applicationId: string; status: ApplicationStatus; complete: boolean; missing: ("kraPin" | "mobile" | "address")[];
+  /** Only once complete. */
+  screening?: { pep: "CLEAR" | "HIT"; sanctions: "CLEAR" | "HIT" };
+  nextStep?: "TELLER";
+}
+/** B-8b */
+export interface KycOption { code: string; label: string; labelSw: string }
+export interface KycOptions { sourceOfFunds: KycOption[]; monthlyIncome: KycOption[]; relationships: KycOption[] }
 
 /** SIM-swap check of the number a code would go to (the number on record, never one typed at the kiosk). */
 export interface SimSwapCheck {
@@ -253,7 +270,7 @@ export interface AccountOpened {
   account: { accountId: string; accountNumber: string; display: string; product: string; branch: string };
   customerToken: string; cardOrderAllowed: boolean; nameOnCard: string; reference: string; smsSent: boolean;
   /** What went to core banking with the account: the specimen signature (B-11) and the thumbprint from B-5. */
-  mandate: { signatureRegistered: boolean; biometricsEnrolled: boolean };
+  mandate: { signatureRegistered: boolean; biometricsEnrolled: boolean; faceEnrolled: boolean };
 }
 /** B-13 */
 export interface ApplicationView {
@@ -272,6 +289,12 @@ export type LookupRequest =
 export interface LookupResult {
   lookupRef: string; customerId: string; displayName: string; maskedMobile: string; accountsFound: number;
   verificationRequired: ("OTP" | "FINGERPRINT")[];
+  /** Fingers the bank holds for this customer (account opening, kiosk or branch enrolment). Empty: none yet. */
+  enrolledFingers: Finger[];
+  /** Ask the customer for this finger in B-5 and send it as fingerprint.finger, so it is matched against the bank's print. */
+  fingerToScan: Finger;
+  /** True: B-5 compares the face with the bank's photo from account opening (face.against BANK_PHOTO). */
+  bankFaceOnFile: boolean;
 }
 /** C-2 */
 export type CardStatus = "INACTIVE_PIN_REQUIRED" | "ACTIVE" | "TEMP_BLOCKED" | "BLOCKED" | "PIN_LOCKED" | "EXPIRED";

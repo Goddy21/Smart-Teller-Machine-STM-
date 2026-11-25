@@ -5,7 +5,7 @@ import type {
   DepositOpened, DepositTarget, DepositTargetRequest, DeviceStatus, DeviceToken, Dispensed, DispenseRequest,
   DocumentVerified, DocumentVerifyRequest, EndReason, ErrorCode, FeeQuote, FeeQuoteRequest, FxConfirmed, FxCounted,
   FxCountRequest, FxExchangeOpened, FxExchangeRequest, FxQuote, FxQuoteRequest, FxRates, HealthAccepted, HealthReport, OperatorSignIn, CustomerSummary,
-  JournalUpload, KraResult, KycStatus, SimSwapCheck, KycCaptured, KycRequest, Lang, LookupRequest, LookupResult, Money, Note, OtpSendRequest,
+  JournalUpload, KraResult, KycStatus, SimSwapCheck, KycCaptured, KycOptions, KycRequest, Lang, LookupRequest, LookupResult, Money, Note, OtpSendRequest,
   OpenDepositRequest, OtpSent, OtpVerified, PinSetRequest, PinVerified, PinVerifyRequest, PrintStep, Product, Receipt, ReceiptRequest,
   ReceiptStatus, Reconciliation, Reversal, ReverseRequest, SessionEnded, SessionStarted, SignatureRequest, SmsQueued,
   SmsRequest, StartApplicationRequest, StartSessionRequest, Statement, StatementOption, StatementRequest,
@@ -263,7 +263,10 @@ export class StmClient {
   /** B-7 */
   validateKraPin(kraPin: string, idNumber: string) { return this.call<KraResult>("POST", "/kyc/kra-pin/validate", { kraPin, idNumber }); }
   /** B-8. Screening runs here: status REFERRED means wait for the portal (poll application() or offer a teller). */
+  /** B-8: send each "Your details" page as it is finished (fields left out keep their saved value). */
   captureKyc(applicationId: string, r: KycRequest) { return this.call<KycCaptured>("PATCH", `/onboarding/applications/${applicationId}/kyc`, r); }
+  /** B-8b: the choices for source of funds, monthly income and next-of-kin relationship. */
+  kycOptions() { return this.call<KycOptions>("GET", "/onboarding/kyc-options", undefined, { session: false }); }
   /** B-9 */
   sendOtp(r: OtpSendRequest) { return this.call<OtpSent>("POST", "/otp/send", { channel: "SMS", ...r }); }
   /** B-10 */

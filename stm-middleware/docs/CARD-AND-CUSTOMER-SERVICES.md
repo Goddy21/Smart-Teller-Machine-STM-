@@ -117,9 +117,13 @@ POST https://10.8.0.1:8443/stm/v1/customers/lookup
 **Receive** `200`
 ```json
 { "lookupRef": "lk_684C1KW6HHC6", "customerId": "CIF00204417", "displayName": "M. N. Kariuki",
-  "maskedMobile": "+254 7•• ••• 417", "accountsFound": 4, "verificationRequired": ["OTP", "FINGERPRINT"] }
+  "maskedMobile": "+254 7•• ••• 417", "accountsFound": 4, "verificationRequired": ["OTP", "FINGERPRINT"],
+  "enrolledFingers": ["RIGHT_THUMB"], "fingerToScan": "RIGHT_THUMB", "bankFaceOnFile": true }
 ```
-✅ **Keep** `lookupRef` and `customerId`.
+✅ **Keep** `lookupRef`, `customerId` and `fingerToScan`.
+👉 At the thumbprint step (V4), ask for **`fingerToScan`** ("Place your right thumb on the scanner") and send it as
+`fingerprint.finger`. It is a finger the bank already holds (from account opening or an earlier enrolment), so the
+print is compared with the customer's own print. `enrolledFingers` lists all of them; empty means none yet.
 👉 Show "We will send a code to `maskedMobile`". Add a link **"I no longer have this phone"** (section 6).
 
 ### V2 · C3: send the code (B-9)
@@ -154,21 +158,26 @@ POST https://10.8.0.1:8443/stm/v1/identity/biometrics/verify
 **Send**
 ```json
 { "customerId": "CIF00204417", "lookupRef": "lk_684C1KW6HHC6",
+  "face": { "image": "<base64>", "livenessScore": 0.94 },
   "fingerprint": { "finger": "RIGHT_THUMB", "template": "<base64>", "quality": 82 } }
 ```
 **Receive** `200`
 ```json
 {
-  "fingerprint": { "result": "MATCH", "against": "IPRS", "score": 0.95 },
+  "face": { "result": "MATCH", "against": "BANK_PHOTO", "score": 0.981 },
+  "fingerprint": { "result": "MATCH", "against": "BANK", "score": 0.97 },
   "overall": "PASS",
   "attemptsLeft": 3,
   "customerToken": "cst_4gOxMzShX2b1…",
-  "bankEnrolment": { "enrolled": false, "fingers": [], "offerEnrolment": true }
+  "bankEnrolment": { "enrolled": true, "fingers": ["RIGHT_THUMB"], "faceOnFile": true, "offerEnrolment": false }
 }
 ```
 ✅ **Keep** `customerToken`. Send it as `X-Customer-Token` on every call from here.
 👉 `fingerprint.against` is `BANK` when the customer's fingerprints are enrolled with the bank, `IPRS` when we could
 only check the national registry.
+👉 The face is optional here (the phone code and thumbprint are the two factors) but recommended. `face.against` is
+`BANK_PHOTO` when compared with the photo taken at account opening, `IPRS_PHOTO` for the national registry photo.
+When the phone is lost (section 6) the face is required, and the bank's photo means it works for passport holders too.
 👉 `bankEnrolment.offerEnrolment` is `true` for a customer with no fingerprints at the bank. Offer **"Register your
 fingerprints"** (M-3) so the next visit is checked against the bank.
 👉 `422 BIOMETRIC_NO_MATCH`: try again. At `details.attemptsLeft` 0, offer "Talk to a teller".

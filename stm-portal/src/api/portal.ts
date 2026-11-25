@@ -62,7 +62,12 @@ export interface Application {
   idNumberMasked?: string;
   kraPin: string | null;
   mobile: string | null;
-  address: { line1: string; town?: string; county?: string } | null;
+  address: { line1?: string; town?: string; county?: string; subCounty?: string; ward?: string; poBox?: string } | null;
+  email?: string | null;
+  employer?: string | null;
+  /** UP_TO_10K, 10K_50K, 50K_100K, 100K_500K, OVER_500K */
+  monthlyIncome?: string | null;
+  nextOfKin?: { fullName?: string; relationship?: string; mobile?: string } | null;
   occupation: string | null;
   sourceOfFunds: string | null;
   screening: { sanctions: string; pep: string } | null;
@@ -112,6 +117,7 @@ export interface ServiceEvent {
 export interface CustomerRecord {
   unavailable?: boolean;
   biometricsEnrolled?: boolean; fingers?: string[]; biometricsSource?: string | null; biometricsEnrolledAt?: string | null;
+  faceOnFile?: boolean; faceSource?: string | null;
   signatureOnFile?: boolean; signatureSource?: string | null; signatureCapturedAt?: string | null; mobileChangedAt?: string | null;
 }
 
@@ -128,6 +134,7 @@ export interface SessionDetail extends SessionRow {
     id: string; applicationId: string | null; customerId: string | null; faceResult: string | null; faceScore: number | null;
     livenessScore: number | null; finger: string; fingerResult: string; fingerScore: number; fingerQuality: number;
     overall: "PASS" | "FAIL"; attemptsLeft: number; createdAt: string;
+    faceAgainst?: string | null; matchedAgainst?: string | null;
   }[];
   cardOrders: CardOrder[];
   deposits: {

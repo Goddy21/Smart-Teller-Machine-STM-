@@ -631,8 +631,8 @@ Every error has the same shape. **Show `message` (English) or `messageSw` (Kiswa
 {
   "error": {
     "code": "BIOMETRIC_NO_MATCH",
-    "message": "Your face or thumbprint did not match the registry record.",
-    "messageSw": "Uso au alama ya kidole chako haikulingana na rekodi ya sajili.",
+    "message": "Your face or thumbprint did not match our records.",
+    "messageSw": "Uso au alama ya kidole chako haikulingana na rekodi zetu.",
     "retryable": true,
     "requestId": "6f1c…",
     "details": { "attemptsLeft": 2 }

@@ -74,8 +74,8 @@ public final class Errors {
     }
     public static StmException biometricNoMatch(int attemptsLeft) {
         return of(HttpStatus.UNPROCESSABLE_ENTITY, "BIOMETRIC_NO_MATCH",
-                "Your face or thumbprint did not match the registry record.",
-                "Uso au alama ya kidole chako haikulingana na rekodi ya sajili.", attemptsLeft > 0)
+                "Your face or thumbprint did not match our records.",
+                "Uso au alama ya kidole chako haikulingana na rekodi zetu.", attemptsLeft > 0)
                 .detail("attemptsLeft", attemptsLeft);
     }
     public static StmException existingCustomer(String verificationId) {

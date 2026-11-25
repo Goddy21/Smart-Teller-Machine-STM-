@@ -144,10 +144,11 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
             long n = jdbc.sql("SELECT nextval('sim_cif_seq')").query(Long.class).single();
             cif = String.format("CIF%08d", n);
             jdbc.sql("""
-                    INSERT INTO sim_customers (id, id_number, full_name, first_name, mobile, kra_pin, address, branch)
-                    VALUES (:id, :n, :f, :fn, :m, :k, :a, :b)""")
+                    INSERT INTO sim_customers (id, id_number, full_name, first_name, mobile, kra_pin, address, branch, email, profile)
+                    VALUES (:id, :n, :f, :fn, :m, :k, :a, :b, :e, :p)""")
                     .param("id", cif).param("n", c.idNumber()).param("f", c.fullName()).param("fn", c.firstName())
                     .param("m", c.mobile()).param("k", c.kraPin()).param("a", c.addressJson()).param("b", branchCode)
+                    .param("e", c.email()).param("p", c.profileJson())
                     .update();
         }
         long seq = jdbc.sql("SELECT nextval('sim_account_seq')").query(Long.class).single();
@@ -330,9 +331,12 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
         record Row(String finger, OffsetDateTime at, String source) {}
         List<Row> rows = jdbc.sql("SELECT finger, enrolled_at, source FROM sim_biometrics WHERE customer_id = :c ORDER BY finger")
                 .param("c", customerId).query((rs, n) -> new Row(rs.getString(1), rs.getObject(2, OffsetDateTime.class), rs.getString(3))).list();
-        if (rows.isEmpty()) return new Biometrics(false, List.of(), null, null);
+        String faceSource = jdbc.sql("SELECT source FROM sim_face_references WHERE customer_id = :c")
+                .param("c", customerId).query(String.class).optional().orElse(null);
+        if (rows.isEmpty()) return new Biometrics(false, List.of(), null, null, faceSource != null, faceSource);
         Row latest = rows.stream().max(java.util.Comparator.comparing(Row::at)).orElseThrow();
-        return new Biometrics(true, rows.stream().map(Row::finger).toList(), latest.at(), latest.source());
+        return new Biometrics(true, rows.stream().map(Row::finger).toList(), latest.at(), latest.source(),
+                faceSource != null, faceSource);
     }
 
     @Override
@@ -362,6 +366,32 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
         if (n == 0) return Optional.empty();
         if (control.acceptAll()) return Optional.of(new IdentityServices.MatchResult("MATCH", 0.97));
         return Optional.of(quality < 40 ? new IdentityServices.MatchResult("NO_MATCH", 0.24) : new IdentityServices.MatchResult("MATCH", 0.97));
+    }
+
+    @Override
+    public void enrolFace(String customerId, byte[] image, String source) {
+        control.core();
+        if (image == null || image.length == 0) return;
+        jdbc.sql("""
+                INSERT INTO sim_face_references (customer_id, image_sha256, size_bytes, source)
+                VALUES (:c, :h, :n, :s)
+                ON CONFLICT (customer_id) DO UPDATE
+                  SET image_sha256 = excluded.image_sha256, size_bytes = excluded.size_bytes,
+                      source = excluded.source, enrolled_at = now()""")
+                .param("c", customerId).param("h", Hashing.sha256Hex(image)).param("n", image.length)
+                .param("s", source).update();
+    }
+
+    /** The simulator has no face matcher: a live face (liveness 0.5+) matches the reference photo. */
+    @Override
+    public Optional<IdentityServices.MatchResult> matchEnrolledFace(String customerId, byte[] image, double livenessScore) {
+        control.core();
+        long n = jdbc.sql("SELECT count(*) FROM sim_face_references WHERE customer_id = :c")
+                .param("c", customerId).query(Long.class).single();
+        if (n == 0) return Optional.empty();
+        if (control.acceptAll()) return Optional.of(new IdentityServices.MatchResult("MATCH", 0.981));
+        return Optional.of(livenessScore < 0.5 ? new IdentityServices.MatchResult("NO_MATCH", 0.0)
+                : new IdentityServices.MatchResult("MATCH", 0.981));
     }
 
     @Override

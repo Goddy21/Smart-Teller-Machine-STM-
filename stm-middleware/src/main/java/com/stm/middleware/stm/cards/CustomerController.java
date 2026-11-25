@@ -85,6 +85,13 @@ public class CustomerController {
         out.put("maskedMobile", SmsService.mask(c.mobile()));
         out.put("accountsFound", accounts);
         out.put("verificationRequired", List.of("OTP", "FINGERPRINT"));
+        // Which finger to ask for: one the bank holds (from account opening or a kiosk/branch enrolment), so the print
+        // is matched against the bank's own template. RIGHT_THUMB when none is enrolled (then IPRS is the reference).
+        CoreBanking.Biometrics bio = core.biometrics(c.id());
+        List<String> fingers = bio.fingers() == null ? List.of() : bio.fingers();
+        out.put("enrolledFingers", fingers);
+        out.put("fingerToScan", fingers.contains("RIGHT_THUMB") || fingers.isEmpty() ? "RIGHT_THUMB" : fingers.get(0));
+        out.put("bankFaceOnFile", bio.faceOnFile());
         return out;
     }
 

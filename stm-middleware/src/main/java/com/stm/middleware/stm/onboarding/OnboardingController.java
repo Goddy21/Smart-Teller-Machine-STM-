@@ -148,11 +148,38 @@ public class OnboardingController {
 
     // ------------------------------------------------------------------ B-8
 
-    public record Address(@NotBlank @Size(max = 80) String line1, @Size(max = 60) String town, @Size(max = 40) String county) {}
+    /**
+     * line1 = estate, street or landmark; poBox = "1234-00100". county / subCounty / ward from page 1 of "Your details".
+     */
+    public record Address(@Size(max = 80) String line1, @Size(max = 60) String town, @Size(max = 40) String county,
+                          @Size(max = 60) String subCounty, @Size(max = 60) String ward, @Size(max = 30) String poBox) {}
 
-    public record KycRequest(@NotBlank @Size(max = 20) String kraPin, @NotBlank @Size(max = 20) String mobile,
-                             @NotNull @Valid Address address, @Size(max = 80) String occupation,
-                             @Size(max = 80) String sourceOfFunds) {}
+    public record NextOfKin(@Size(max = 100) String fullName, @Size(max = 40) String relationship,
+                            @Size(max = 20) String mobile) {}
+
+    /**
+     * Every field is optional so the kiosk can save each "Your details" page as it goes (page 1: kraPin, mobile, email,
+     * address.county/subCounty/ward; page 2: address.line1/poBox, occupation, employer, sourceOfFunds, monthlyIncome;
+     * page 3: nextOfKin). Fields left out keep what was saved before. The details are complete (and screening runs)
+     * once kraPin, mobile and an address (line1 or county) are on file; sending everything at once still works.
+     */
+    public record KycRequest(@Size(max = 20) String kraPin, @Size(max = 20) String mobile,
+                             @Email @Size(max = 120) String email,
+                             @Valid Address address, @Size(max = 80) String occupation, @Size(max = 100) String employer,
+                             @Size(max = 80) String sourceOfFunds, @Size(max = 60) String monthlyIncome,
+                             @Valid NextOfKin nextOfKin) {}
+
+    /** B-8b: the choices for the "Your details" pickers (codes to send back, labels in English and Kiswahili). */
+    @GetMapping("/onboarding/kyc-options")
+    @SessionOptional
+    public Map<String, Object> kycOptions() {
+        return Map.of("sourceOfFunds", KycOptions.SOURCE_OF_FUNDS.stream().map(KycOptions::asMap).toList(),
+                "monthlyIncome", KycOptions.MONTHLY_INCOME.stream().map(KycOptions::asMap).toList(),
+                "relationships", KycOptions.RELATIONSHIPS.stream().map(KycOptions::asMap).toList());
+    }
+
+    private record Saved(String kraPin, String mobile, String email, String address, String occupation, String employer,
+                         String sourceOfFunds, String monthlyIncome, String nextOfKin) {}
 
     @PatchMapping("/onboarding/applications/{id}/kyc")
     @Transactional
@@ -160,19 +187,64 @@ public class OnboardingController {
         Application a = applications.mine(ctx, id);
         if ("REFERRED".equals(a.status())) throw Errors.screeningReferred(id);
         applications.expect(a, "IDENTITY_VERIFIED", "KYC_CAPTURED");
-        IdentityServices.KraResult kra = identity.validateKraPin(req.kraPin(), a.idNumber());
-        if (!testMode() && (!kra.valid() || !kra.matchesId())) throw Errors.kraPinInvalid(kra.status());
-        String mobile = SmsService.normalise("mobile", req.mobile());
+        Saved s = jdbc.sql("""
+                SELECT kra_pin, mobile, email, address, occupation, employer, source_of_funds, monthly_income, next_of_kin
+                FROM applications WHERE id = :id""").param("id", id)
+                .query((rs, n) -> new Saved(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5),
+                        rs.getString(6), rs.getString(7), rs.getString(8), rs.getString(9))).single();
+
+        Map<String, Object> cols = new HashMap<>();
+        String kraPin = s.kraPin();
+        if (blank(req.kraPin()) == null && req.kraPin() != null) throw Errors.validation("kraPin", "KRA PIN is empty");
+        if (req.kraPin() != null) {
+            kraPin = req.kraPin().trim().toUpperCase();
+            IdentityServices.KraResult kra = identity.validateKraPin(kraPin, a.idNumber());
+            if (!testMode() && (!kra.valid() || !kra.matchesId())) throw Errors.kraPinInvalid(kra.status());
+            cols.put("kra_pin", kraPin);
+        }
+        String mobile = req.mobile() != null ? SmsService.normalise("mobile", req.mobile()) : s.mobile();
+        if (req.mobile() != null) cols.put("mobile", mobile);
+        if (req.email() != null) cols.put("email", blank(req.email()) == null ? null : req.email().trim().toLowerCase());
+
+        Map<String, Object> address = s.address() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(json.read(s.address(), Json.MAP));
+        if (req.address() != null) {
+            Address ad = req.address();
+            putIf(address, "line1", ad.line1()); putIf(address, "town", ad.town()); putIf(address, "county", ad.county());
+            putIf(address, "subCounty", ad.subCounty()); putIf(address, "ward", ad.ward()); putIf(address, "poBox", ad.poBox());
+            cols.put("address", json.write(address));
+        }
+        if (req.occupation() != null) cols.put("occupation", blank(req.occupation()));
+        if (req.employer() != null) cols.put("employer", blank(req.employer()));
+        if (req.sourceOfFunds() != null) cols.put("source_of_funds", KycOptions.sourceOfFunds(req.sourceOfFunds()));
+        if (req.monthlyIncome() != null) cols.put("monthly_income", KycOptions.monthlyIncome(req.monthlyIncome()));
+        if (req.nextOfKin() != null) {
+            NextOfKin k = req.nextOfKin();
+            Map<String, Object> nok = s.nextOfKin() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(json.read(s.nextOfKin(), Json.MAP));
+            putIf(nok, "fullName", k.fullName());
+            putIf(nok, "relationship", k.relationship());
+            if (blank(k.mobile()) != null) nok.put("mobile", SmsService.normalise("nextOfKin.mobile", k.mobile()));
+            cols.put("next_of_kin", json.write(nok));
+        }
+
+        List<String> missing = new ArrayList<>();
+        if (kraPin == null) missing.add("kraPin");
+        if (mobile == null) missing.add("mobile");
+        if (address.get("line1") == null && address.get("county") == null) missing.add("address");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("applicationId", id);
+        if (!missing.isEmpty()) {
+            // Saved, but not complete yet: screening waits until the identity details are all there.
+            if (!cols.isEmpty()) applications.update(id, cols);
+            audit.session(ctx, "KYC_SAVED", "applicationId", id, "fields", cols.keySet().stream().sorted().toList());
+            out.put("status", a.status());
+            out.put("complete", false);
+            out.put("missing", missing);
+            return out;
+        }
         RegistryRecord r = identityController.registryOfVerification(a.verificationId());
         IdentityServices.Screening screening = identity.screen(r);
         boolean referred = !screening.clear() && !"CLEARED".equals(a.referralStatus());
         String status = referred ? "REFERRED" : "KYC_CAPTURED";
-        Map<String, Object> cols = new HashMap<>();
-        cols.put("kra_pin", req.kraPin().trim().toUpperCase());
-        cols.put("mobile", mobile);
-        cols.put("address", json.write(req.address()));
-        cols.put("occupation", req.occupation());
-        cols.put("source_of_funds", req.sourceOfFunds());
         cols.put("screening", json.write(screening));
         cols.put("status", status);
         cols.put("otp_verified", false);
@@ -180,12 +252,21 @@ public class OnboardingController {
         applications.update(id, cols);
         audit.session(ctx, referred ? "APPLICATION_REFERRED" : "KYC_CAPTURED", "applicationId", id,
                 "sanctions", screening.sanctions(), "pep", screening.pep());
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("applicationId", id);
         out.put("status", status);
+        out.put("complete", true);
+        out.put("missing", List.of());
         out.put("screening", Map.of("sanctions", screening.sanctions(), "pep", screening.pep()));
         if (referred) out.put("nextStep", "TELLER");
         return out;
+    }
+
+    private static String blank(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    private static void putIf(Map<String, Object> m, String key, String value) {
+        if (value == null) return;
+        if (value.isBlank()) m.remove(key); else m.put(key, value.trim());
     }
 
     // ------------------------------------------------------------------ B-11
@@ -228,8 +309,21 @@ public class OnboardingController {
         String accountType = jdbc.sql("SELECT account_type FROM products WHERE code = :c").param("c", a.productCode())
                 .query(String.class).single();
         String branch = req.branchCode() != null ? req.branchCode() : ctx.device().branchCode();
+        Map<String, Object> details = jdbc.sql("""
+                SELECT email, employer, monthly_income, next_of_kin FROM applications WHERE id = :id""").param("id", a.id())
+                .query((rs, n) -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("email", rs.getString(1));
+                    m.put("occupation", a.occupation());
+                    m.put("employer", rs.getString(2));
+                    m.put("monthlyIncome", rs.getString(3));
+                    m.put("sourceOfFunds", a.sourceOfFunds());
+                    m.put("nextOfKin", rs.getString(4) == null ? null : json.read(rs.getString(4), Json.MAP));
+                    return m;
+                }).single();
         CoreBanking.Opened opened = core.openCustomerAndAccount(new CoreBanking.NewCustomer(r.documentNumber(),
-                r.fullName(), r.firstName(), a.mobile(), a.kraPin(), a.address()), a.productCode(), accountType, branch);
+                r.fullName(), r.firstName(), a.mobile(), a.kraPin(), a.address(), (String) details.remove("email"),
+                json.write(details)), a.productCode(), accountType, branch);
         String nameOnCard = req.nameOnCard() != null && !req.nameOnCard().isBlank() ? req.nameOnCard()
                 : CardNames.options(r.givenNames(), r.surname()).get(0);
         String cardProduct = req.cardProduct() != null ? req.cardProduct() : "CLASSIC";
@@ -243,9 +337,9 @@ public class OnboardingController {
         cols.put("name_on_card", nameOnCard);
         cols.put("reference", ref);
         applications.update(id, cols);
-        // The mandate goes to core banking with the account: the specimen signature (B-11) and the thumbprint that
-        // passed at B-5 become the bank's own records, so later visits match against the bank, not only IPRS.
-        boolean signatureRegistered = false, biometricsEnrolled = false;
+        // The mandate goes to core banking with the account: the specimen signature (B-11) and the face and thumbprint
+        // that passed at B-5 become the bank's own records, so later visits match against the bank, not only IPRS.
+        boolean signatureRegistered = false, biometricsEnrolled = false, faceEnrolled = false;
         Optional<Captures.Capture> sig = captures.latest(id, "SIGNATURE");
         if (sig.isPresent()) {
             core.registerSignature(opened.customerId(), sig.get().content(), sig.get().mimeType(), "STM_ONBOARDING");
@@ -263,6 +357,14 @@ public class OnboardingController {
                     "STM_ONBOARDING");
             biometricsEnrolled = true;
         }
+        Optional<Captures.Capture> facePhoto = jdbc.sql("""
+                SELECT id FROM biometric_checks WHERE application_id = :a AND overall = 'PASS'
+                ORDER BY created_at DESC LIMIT 1""").param("a", id).query(String.class).optional()
+                .flatMap(checkId -> captures.latest(checkId, "FACE"));
+        if (facePhoto.isPresent()) {
+            core.enrolFace(opened.customerId(), facePhoto.get().content(), "STM_ONBOARDING");
+            faceEnrolled = true;
+        }
         String token = customerTokens.issue(ctx.sessionId(), opened.customerId(), "ONBOARDING");
         sessions.setCustomer(ctx.sessionId(), opened.customerId(), r.fullName());
         String branchName = jdbc.sql("SELECT name FROM branches WHERE code = :c").param("c", opened.account().branch())
@@ -274,7 +376,7 @@ public class OnboardingController {
                 "branch", branchName, "ref", ref));
         audit.session(ctx, "ACCOUNT_OPENED", "applicationId", id, "customerId", opened.customerId(),
                 "accountId", opened.account().id(), "reference", ref, "signatureRegistered", signatureRegistered,
-                "biometricsEnrolled", biometricsEnrolled);
+                "biometricsEnrolled", biometricsEnrolled, "faceEnrolled", faceEnrolled);
         Map<String, Object> account = new LinkedHashMap<>();
         account.put("accountId", opened.account().id());
         account.put("accountNumber", opened.account().number());
@@ -291,7 +393,8 @@ public class OnboardingController {
         out.put("nameOnCard", nameOnCard);
         out.put("reference", ref);
         out.put("smsSent", "QUEUED".equals(sent.status()));
-        out.put("mandate", Map.of("signatureRegistered", signatureRegistered, "biometricsEnrolled", biometricsEnrolled));
+        out.put("mandate", Map.of("signatureRegistered", signatureRegistered, "biometricsEnrolled", biometricsEnrolled,
+                "faceEnrolled", faceEnrolled));
         return out;
     }
 
@@ -342,7 +445,9 @@ public class OnboardingController {
                 .param("a", id).update();
         jdbc.sql("UPDATE identity_verifications SET registry = NULL, ocr = NULL, mrz = NULL WHERE application_id = :a")
                 .param("a", id).update();
-        jdbc.sql("UPDATE applications SET address = NULL, kra_pin = NULL WHERE id = :a").param("a", id).update();
+        jdbc.sql("""
+                UPDATE applications SET address = NULL, kra_pin = NULL, email = NULL, employer = NULL, monthly_income = NULL,
+                       next_of_kin = NULL WHERE id = :a""").param("a", id).update();
         audit.session(ctx, "APPLICATION_CANCELLED", "applicationId", id, "reason", reason, "atStep", atStep);
         return Map.of("applicationId", id, "status", "CANCELLED", "dataRetention", "DELETED_EXCEPT_AUDIT");
     }
