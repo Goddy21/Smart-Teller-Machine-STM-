@@ -34,7 +34,13 @@ public interface IdentityServices {
         }
     }
 
-    record MatchResult(String result, double score) {
+    /**
+     * result MATCH / NO_MATCH; score 0..1 for display. method: how the decision was made
+     * (MATCHER = the two prints were really compared, rawScore is the matcher's similarity score;
+     * null = a provider or simulator decision without a comparison the middleware can see).
+     */
+    record MatchResult(String result, double score, String method, Double rawScore) {
+        public MatchResult(String result, double score) { this(result, score, null, null); }
         public boolean match() {
             return "MATCH".equals(result);
         }

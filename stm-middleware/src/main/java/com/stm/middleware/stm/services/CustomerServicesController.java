@@ -48,11 +48,14 @@ public class CustomerServicesController {
         return c != null && c.acceptAll();
     }
 
+    private final com.stm.middleware.stm.biometrics.FingerprintMatching matching;
+
     public CustomerServicesController(CoreBanking core, CardSystem cms, IdentityServices identity, KycChecks kyc, Owned owned,
                                       Safeguards safeguards, ServiceEvents events, SmsService sms, Refs refs,
-                                      JdbcClient jdbc, StmAudit audit,
+                                      JdbcClient jdbc, StmAudit audit, com.stm.middleware.stm.biometrics.FingerprintMatching matching,
             org.springframework.beans.factory.ObjectProvider<com.stm.middleware.backend.sim.SimControl> sim) {
         this.sim = sim;
+        this.matching = matching;
         this.core = core;
         this.cms = cms;
         this.identity = identity;
@@ -168,7 +171,8 @@ public class CustomerServicesController {
     // ------------------------------------------------------------------ M-3
 
     public record Finger(@NotBlank @Pattern(regexp = "RIGHT_THUMB|LEFT_THUMB|RIGHT_INDEX|LEFT_INDEX") String finger,
-                         @NotBlank String template, @NotNull @Min(0) @Max(100) Integer quality) {}
+                         @NotBlank String template, @NotNull @Min(0) @Max(100) Integer quality,
+                         String image) {}   // the print image (PNG/JPEG/BMP): what later prints are really compared with
 
     public record EnrolRequest(@NotEmpty @Size(max = 4) List<@Valid Finger> fingerprints, Boolean consent) {}
 
@@ -204,7 +208,8 @@ public class CustomerServicesController {
                 audit.session(ctx, "BIOMETRIC_ENROLMENT_REJECTED", "customerId", customerId, "finger", f.finger());
                 throw Errors.biometricNoMatch(0).detail("finger", f.finger()).detail("offerTeller", true);
             }
-            list.add(new CoreBanking.FingerTemplate(f.finger(), tpl, f.quality()));
+            byte[] image = f.image() == null || f.image().isBlank() ? null : Captures.decode("fingerprints.image", f.image());
+            list.add(new CoreBanking.FingerTemplate(f.finger(), matching.template(image, tpl).orElse(tpl), f.quality()));
         }
         boolean first = !core.biometrics(customerId).enrolled();
         CoreBanking.Biometrics b = core.enrolBiometrics(customerId, list, "STM_ENROLMENT");

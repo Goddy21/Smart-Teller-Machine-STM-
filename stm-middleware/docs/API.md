@@ -484,7 +484,9 @@ Seen in testing: `409 EXISTING_CUSTOMER`, `422 IDENTITY_MISMATCH`
 
 `POST /stm/v1/identity/biometrics/verify`  ·  needs `X-Session-Id`
 
-Account opening: applicationId + verificationId. Card services: customerId + lookupRef (after the OTP), and the answer carries `customerToken` (source `VERIFIED_IDENTITY`) and `bankEnrolment` `{enrolled, fingers, faceOnFile, offerEnrolment}`; `fingerprint.image` (optional, PNG/JPEG preview of the print) and the real `fingerprint.quality` (0–100) and `face.livenessScore` (0–1) from the devices are shown to staff in the portal, so please send them; the thumbprint is matched against the bank's enrolled prints when there are any (`fingerprint.against: BANK`), otherwise against IPRS. The face is compared with the bank's own photo of the customer when there is one, i.e. the face that passed at account opening (`face.against: BANK_PHOTO`), otherwise with the registry photo (Kenyan ID, then passport, `IPRS_PHOTO`); a customer with neither is verified by the bank's prints alone and the answer says `face: {"result": "NOT_CHECKED", "reason": "NO_REFERENCE_PHOTO"}`. No prints with the bank and no registry record: 422 IDENTITY_MISMATCH `result: NO_BIOMETRICS_ON_FILE`, `offerTeller: true`. Phone lost: customerId + lookupRef + `"purpose": "MOBILE_CHANGE"` with face **and** fingerprint, no OTP; the token (source `BIOMETRIC_ONLY`, `allows: ["MOBILE_CHANGE"]`) works only for M-4 and M-5. 422 BIOMETRIC_NO_MATCH with `details.attemptsLeft`; at 0 a teller decides in the portal.
+Account opening: applicationId + verificationId. Card services: customerId + lookupRef (after the OTP), and the answer carries `customerToken` (source `VERIFIED_IDENTITY`) and `bankEnrolment` `{enrolled, fingers, faceOnFile, offerEnrolment}`; the real `fingerprint.quality` (0–100) and `face.livenessScore` (0–1) from the devices are shown to staff in the portal, so please send them.
+
+**Fingerprints are really compared.** Always send **`fingerprint.image`**: the raw print image from the scanner (PNG, JPEG or BMP, 500 dpi, grayscale, the whole print, not a thumbnail), or an ISO 19794-2 / ANSI 378 template in `fingerprint.template`. At account opening it becomes the bank's reference print. In card services the live print is compared with every finger the bank holds (SourceAFIS matcher), so **a different finger fails whatever `finger` label is sent**; the answer then shows `fingerprint.method: "MATCHER"` and `fingerprint.matchScore` (similarity; 40 or more passes, the same finger usually scores 100+). When the bank holds a comparable print and no image is sent: 400 VALIDATION_ERROR (`details.field: fingerprint.image`). For customers enrolled before this (no comparable print), the label must be an enrolled finger, otherwise 422 `FINGER_NOT_ENROLLED` with `details.fingerToScan` ("Please use your right thumb…"); prints are matched against the bank's enrolled prints when there are any (`fingerprint.against: BANK`), and against IPRS only when the bank holds none. The face is compared with the bank's own photo of the customer when there is one, i.e. the face that passed at account opening (`face.against: BANK_PHOTO`), otherwise with the registry photo (Kenyan ID, then passport, `IPRS_PHOTO`); a customer with neither is verified by the bank's prints alone and the answer says `face: {"result": "NOT_CHECKED", "reason": "NO_REFERENCE_PHOTO"}`. No prints with the bank and no registry record: 422 IDENTITY_MISMATCH `result: NO_BIOMETRICS_ON_FILE`, `offerTeller: true`. Phone lost: customerId + lookupRef + `"purpose": "MOBILE_CHANGE"` with face **and** fingerprint, no OTP; the token (source `BIOMETRIC_ONLY`, `allows: ["MOBILE_CHANGE"]`) works only for M-4 and M-5. 422 BIOMETRIC_NO_MATCH with `details.attemptsLeft`; at 0 a teller decides in the portal.
 
 Request:
 ```json
@@ -1581,7 +1583,7 @@ Errors: 403 `ACCOUNT_RESTRICTED` (frozen or closed: a teller), 403 `KYC_REFRESH_
 
 `POST /stm/v1/customers/{customerId}/biometrics/enrol`  ·  needs `X-Session-Id`, `X-Customer-Token` (**strong**)
 
-One to four fingers. Each must have quality 50 or more and match the national registry. After this, B-5 matches against the bank (`against: BANK`).
+One to four fingers. Each must have quality 50 or more and match the national registry. Send each finger's `image` (the print image, as in B-5) so later visits can really be compared with it. After this, B-5 matches against the bank (`against: BANK`).
 
 Request:
 ```json
@@ -1591,12 +1593,14 @@ Request:
     {
       "finger": "RIGHT_THUMB",
       "template": "<base64>",
-      "quality": 82
+      "quality": 82,
+      "image": "<base64 PNG>"
     },
     {
       "finger": "LEFT_THUMB",
       "template": "<base64>",
-      "quality": 77
+      "quality": 77,
+      "image": "<base64 PNG>"
     }
   ]
 }

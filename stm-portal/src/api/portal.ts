@@ -135,6 +135,7 @@ export interface SessionDetail extends SessionRow {
     livenessScore: number | null; finger: string; fingerResult: string; fingerScore: number; fingerQuality: number;
     overall: "PASS" | "FAIL"; attemptsLeft: number; createdAt: string;
     faceAgainst?: string | null; matchedAgainst?: string | null;
+    fingerMethod?: string | null; fingerRawScore?: number | null;
   }[];
   cardOrders: CardOrder[];
   deposits: {

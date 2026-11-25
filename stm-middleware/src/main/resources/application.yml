@@ -19,6 +19,9 @@ spring:
       max-request-size: 8MB
 
 stm:
+  biometrics:                       # fingerprint comparison (SourceAFIS)
+    fingerprint-dpi: ${FINGERPRINT_DPI:500}             # resolution of the kiosk scanner's images
+    fingerprint-threshold: ${FINGERPRINT_THRESHOLD:40}  # similarity needed to pass (40 = about 1 false match in 10,000)
   mail:                             # SMTP for portal sign-in codes. No SMTP_HOST = simulated (email_outbox + log only).
     host: ${SMTP_HOST:}
     port: ${SMTP_PORT:587}

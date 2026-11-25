@@ -12,7 +12,7 @@ Afterwards disable it (More > Disable) so it does not count as a real kiosk.
 It changes nothing permanent: the test application is cancelled at the end (its details are deleted) and no card is
 ordered. Test mode must be on (Simulator page, or SIM_ACCEPT_ALL=true), because it opens with an invented ID number.
 """
-import argparse, base64, json, random, ssl, sys, time, urllib.error, urllib.request, uuid
+import argparse, base64, json, os, random, ssl, sys, time, urllib.error, urllib.request, uuid
 
 PX = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABMsehoQAAAABJRU5ErkJggg=="
 results = []
@@ -159,7 +159,57 @@ def main():
         s, r = k.call("POST", "/stm/v1/operators/login", {"username": "nobody-smoke", "pin": "000000"})
         check("Sign-in endpoint answers (wrong user refused)", s == 401 and err(r).startswith("OPERATOR_INVALID"), f"{s} {err(r)}")
         print("        (add --operator and --pin of a terminal user assigned to this kiosk to test a real sign-in)")
+    fingerprint_matcher(k)
     summary()
+
+
+def fingerprint_matcher(k):
+    """Opens a real test account with a fingerprint image, then checks that card services refuses a different finger
+    and accepts the same finger (real comparison, in test mode too). Leaves one test customer "Test Customer Smoke"."""
+    data = os.path.join(os.path.dirname(os.path.abspath(__file__)), "smoke-data")
+    if not os.path.isdir(data):
+        print("\n6. Fingerprint matcher: skipped (smoke-data folder not found next to this script)"); return
+    img = lambda f: base64.b64encode(open(os.path.join(data, f), "rb").read()).decode()
+    print("\n6. Fingerprint matcher: a different finger is refused, the same finger passes (B-5)")
+    s, r = k.call("POST", "/stm/v1/sessions", {"trigger": "TOUCH", "language": "en"}); k.sid = r.get("sessionId")
+    s, t = k.call("GET", "/stm/v1/legal/terms?product=SAV_PERSONAL")
+    s, r = k.call("POST", "/stm/v1/onboarding/applications", {"productCode": "SAV_PERSONAL", "termsId": t.get("termsId"),
+                  "acceptedAt": time.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
+                  "consents": [{"code": c["code"], "accepted": True} for c in t.get("consents", [])]})
+    app = r.get("applicationId"); idno = str(random.randint(40000000, 49999999))
+    s, d = k.call("POST", "/stm/v1/identity/documents/verify", {"applicationId": app, "documentType": "NATIONAL_ID", "country": "KE",
+                  "ocr": {"documentNumber": idno, "surname": "SMOKE", "givenNames": "TEST CUSTOMER", "dateOfBirth": "1990-01-01"},
+                  "images": {"front": PX}})
+    if s != 200:
+        check("Test account opened (needs test mode)", False, f"{s} {err(d)}"); return
+    s, b = k.call("POST", "/stm/v1/identity/biometrics/verify", {"applicationId": app, "verificationId": d["verificationId"],
+                  "face": {"image": PX, "livenessScore": 0.93},
+                  "fingerprint": {"finger": "RIGHT_THUMB", "template": PX, "quality": 80, "image": img("probe.png")}})
+    k.call("POST", f"/stm/v1/onboarding/applications/{app}/identity-confirm", {"verificationId": d["verificationId"], "confirmed": True})
+    k.call("PATCH", f"/stm/v1/onboarding/applications/{app}/kyc", {"kraPin": "A0" + idno + "Z", "mobile": "0712 000 333",
+           "address": {"line1": "Smoke Estate", "town": "Nairobi", "county": "Nairobi"}})
+    s, o = k.call("POST", "/stm/v1/otp/send", {"purpose": "ONBOARDING_PHONE", "applicationId": app, "channel": "SMS"})
+    k.call("POST", "/stm/v1/otp/verify", {"otpRef": o.get("otpRef"), "code": "123456"})
+    k.call("POST", f"/stm/v1/onboarding/applications/{app}/signature", {"image": img("signature.png"), "strokes": 9, "capturedWith": "STYLUS"})
+    s, a = k.call("POST", f"/stm/v1/onboarding/applications/{app}/submit", {}, idem=True)
+    acct = (a.get("account") or {}).get("accountNumber")
+    check("Test account opened with a fingerprint image", s == 201 and acct, f"{s} {err(a)}")
+    k.call("POST", f"/stm/v1/sessions/{k.sid}/end", {"reason": "CUSTOMER_FINISHED"}); k.sid = None
+    if not acct: return
+    s, r = k.call("POST", "/stm/v1/sessions", {"trigger": "TOUCH", "language": "en"}); k.sid = r.get("sessionId")
+    s, lk = k.call("POST", "/stm/v1/customers/lookup", {"by": "ACCOUNT_NUMBER", "accountNumber": acct})
+    s, o = k.call("POST", "/stm/v1/otp/send", {"purpose": "CARD_SERVICES", "lookupRef": lk.get("lookupRef")})
+    k.call("POST", "/stm/v1/otp/verify", {"otpRef": o.get("otpRef"), "code": "123456"})
+    body = lambda f: {"customerId": lk["customerId"], "lookupRef": lk["lookupRef"], "face": {"image": PX, "livenessScore": 0.93},
+                      "fingerprint": {"finger": "RIGHT_THUMB", "template": PX, "quality": 80, "image": img(f)}}
+    s, b = k.call("POST", "/stm/v1/identity/biometrics/verify", body("nonmatching.png"))
+    check("A different finger is refused", s == 422 and err(b).startswith("BIOMETRIC_NO_MATCH"), f"{s} {err(b)}")
+    s, b = k.call("POST", "/stm/v1/identity/biometrics/verify", body("matching.png"))
+    fp = b.get("fingerprint", {})
+    check("The same finger passes (prints really compared)", s == 200 and fp.get("method") == "MATCHER", f"{s} {err(b)} {fp}")
+    if fp.get("matchScore") is not None: print(f"        match score {fp['matchScore']} (pass at 40)")
+    k.call("POST", f"/stm/v1/sessions/{k.sid}/end", {"reason": "CUSTOMER_FINISHED"}); k.sid = None
+    print("        (remove the test customer later: delete-test-customer.sql with -v name=smoke)")
 
 
 def summary():

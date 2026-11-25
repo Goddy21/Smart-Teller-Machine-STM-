@@ -114,7 +114,8 @@ public class PortalSessionsController {
                 FROM identity_verifications WHERE session_id = :s ORDER BY created_at""", p));
         s.put("biometrics", rows.list("""
                 SELECT id, application_id, customer_id, face_result, face_score, liveness_score, finger, finger_result,
-                       finger_score, finger_quality, overall, attempts_left, face_against, matched_against, created_at
+                       finger_score, finger_quality, overall, attempts_left, face_against, matched_against, finger_method,
+                       finger_raw_score, created_at
                 FROM biometric_checks WHERE session_id = :s ORDER BY created_at""", p));
         s.put("cardOrders", rows.list("""
                 SELECT id, service, account_id, card_product, name_on_card, masked_pan, card_id, fee_amount, fee_posted, fee_ref,

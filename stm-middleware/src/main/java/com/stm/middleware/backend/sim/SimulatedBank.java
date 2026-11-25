@@ -69,11 +69,13 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
     private final JdbcClient jdbc;
     private final SimControl control;
     private final int dormantMonths;
+    private final com.stm.middleware.stm.biometrics.FingerprintMatching matching;
 
-    public SimulatedBank(JdbcClient jdbc, SimControl control,
+    public SimulatedBank(JdbcClient jdbc, SimControl control, com.stm.middleware.stm.biometrics.FingerprintMatching matching,
                          @org.springframework.beans.factory.annotation.Value("${stm.accounts.dormant-after-months:12}") int dormantMonths) {
         this.jdbc = jdbc;
         this.control = control;
+        this.matching = matching;
         this.dormantMonths = Math.max(1, dormantMonths);
     }
 
@@ -333,10 +335,12 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
                 .param("c", customerId).query((rs, n) -> new Row(rs.getString(1), rs.getObject(2, OffsetDateTime.class), rs.getString(3))).list();
         String faceSource = jdbc.sql("SELECT source FROM sim_face_references WHERE customer_id = :c")
                 .param("c", customerId).query(String.class).optional().orElse(null);
-        if (rows.isEmpty()) return new Biometrics(false, List.of(), null, null, faceSource != null, faceSource);
+        if (rows.isEmpty()) return new Biometrics(false, List.of(), null, null, faceSource != null, faceSource, false);
         Row latest = rows.stream().max(java.util.Comparator.comparing(Row::at)).orElseThrow();
+        boolean matchable = jdbc.sql("SELECT count(*) FROM sim_biometrics WHERE customer_id = :c AND matcher_template IS NOT NULL")
+                .param("c", customerId).query(Long.class).single() > 0;
         return new Biometrics(true, rows.stream().map(Row::finger).toList(), latest.at(), latest.source(),
-                faceSource != null, faceSource);
+                faceSource != null, faceSource, matchable);
     }
 
     @Override
@@ -345,25 +349,41 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
         control.core();
         for (FingerTemplate f : fingers) {
             jdbc.sql("""
-                    INSERT INTO sim_biometrics (customer_id, finger, template_sha256, quality, source)
-                    VALUES (:c, :f, :h, :q, :s)
+                    INSERT INTO sim_biometrics (customer_id, finger, template_sha256, quality, source, matcher_template)
+                    VALUES (:c, :f, :h, :q, :s, :m)
                     ON CONFLICT (customer_id, finger) DO UPDATE
                       SET template_sha256 = excluded.template_sha256, quality = excluded.quality,
-                          source = excluded.source, enrolled_at = now()""")
+                          source = excluded.source, matcher_template = excluded.matcher_template, enrolled_at = now()""")
                     .param("c", customerId).param("f", f.finger())
                     .param("h", Hashing.sha256Hex(f.template() == null ? new byte[0] : f.template()))
-                    .param("q", f.quality()).param("s", source).update();
+                    .param("q", f.quality()).param("s", source)
+                    .param("m", matching.isTemplate(f.template()) ? f.template() : null).update();
         }
         return biometrics(customerId);
     }
 
-    /** The simulator has no matcher: a readable print (quality 40+) of an enrolled finger matches. */
+    /**
+     * A real comparison (SourceAFIS) whenever the bank holds a matcher template and the live print could be read:
+     * the best score against any enrolled finger decides, in test mode too. Without one (prints enrolled before the
+     * matcher, or no print image sent) the simulator falls back to: a readable print (quality 40+) of an enrolled finger.
+     */
     @Override
     public Optional<IdentityServices.MatchResult> matchEnrolledFingerprint(String customerId, String finger, byte[] template, int quality) {
         control.core();
-        long n = jdbc.sql("SELECT count(*) FROM sim_biometrics WHERE customer_id = :c AND finger = :f")
-                .param("c", customerId).param("f", finger).query(Long.class).single();
-        if (n == 0) return Optional.empty();
+        record Enrolled(String finger, byte[] matcherTemplate) {}
+        List<Enrolled> enrolled = jdbc.sql("SELECT finger, matcher_template FROM sim_biometrics WHERE customer_id = :c")
+                .param("c", customerId).query((rs, i) -> new Enrolled(rs.getString(1), rs.getBytes(2))).list();
+        if (enrolled.isEmpty()) return Optional.empty();
+        List<byte[]> stored = enrolled.stream().map(Enrolled::matcherTemplate).filter(java.util.Objects::nonNull).toList();
+        if (!stored.isEmpty()) {
+            Optional<Double> best = matching.bestScore(template, stored);
+            if (best.isPresent()) {
+                double raw = Math.round(best.get() * 10) / 10.0;
+                return Optional.of(new IdentityServices.MatchResult(raw >= matching.threshold() ? "MATCH" : "NO_MATCH",
+                        matching.normalised(raw), "MATCHER", raw));
+            }
+        }
+        if (enrolled.stream().noneMatch(e -> e.finger().equals(finger))) return Optional.empty();
         if (control.acceptAll()) return Optional.of(new IdentityServices.MatchResult("MATCH", 0.97));
         return Optional.of(quality < 40 ? new IdentityServices.MatchResult("NO_MATCH", 0.24) : new IdentityServices.MatchResult("MATCH", 0.97));
     }

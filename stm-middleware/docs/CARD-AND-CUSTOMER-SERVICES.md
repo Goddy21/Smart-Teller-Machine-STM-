@@ -159,13 +159,13 @@ POST https://10.8.0.1:8443/stm/v1/identity/biometrics/verify
 ```json
 { "customerId": "CIF00204417", "lookupRef": "lk_684C1KW6HHC6",
   "face": { "image": "<base64>", "livenessScore": 0.94 },
-  "fingerprint": { "finger": "RIGHT_THUMB", "template": "<base64>", "quality": 82 } }
+  "fingerprint": { "finger": "RIGHT_THUMB", "template": "<base64>", "quality": 82, "image": "<base64 PNG>" } }
 ```
 **Receive** `200`
 ```json
 {
   "face": { "result": "MATCH", "against": "BANK_PHOTO", "score": 0.981 },
-  "fingerprint": { "result": "MATCH", "against": "BANK", "score": 0.97 },
+  "fingerprint": { "result": "MATCH", "against": "BANK", "score": 0.855, "method": "MATCHER", "matchScore": 235.6 },
   "overall": "PASS",
   "attemptsLeft": 3,
   "customerToken": "cst_4gOxMzShX2b1…",
@@ -173,6 +173,11 @@ POST https://10.8.0.1:8443/stm/v1/identity/biometrics/verify
 }
 ```
 ✅ **Keep** `customerToken`. Send it as `X-Customer-Token` on every call from here.
+👉 **Always send `fingerprint.image`** (the scanner's print image: PNG/JPEG/BMP, 500 dpi). It is compared with the
+print taken at account opening, so a different finger is refused (`422 BIOMETRIC_NO_MATCH`) whatever `finger` says.
+`method: "MATCHER"` and `matchScore` (40+ passes) show the prints were really compared. No image for a customer whose
+print can be compared: `400 VALIDATION_ERROR` on `fingerprint.image`.
+👉 `422 FINGER_NOT_ENROLLED` (older customers only): ask for `details.fingerToScan` and scan again.
 👉 `fingerprint.against` is `BANK` when the customer's fingerprints are enrolled with the bank, `IPRS` when we could
 only check the national registry.
 👉 The face is optional here (the phone code and thumbprint are the two factors) but recommended. `face.against` is
@@ -483,8 +488,8 @@ POST https://10.8.0.1:8443/stm/v1/customers/CIF00204417/biometrics/enrol
 ```json
 { "consent": true,
   "fingerprints": [
-    { "finger": "RIGHT_THUMB", "template": "<base64>", "quality": 82 },
-    { "finger": "LEFT_THUMB",  "template": "<base64>", "quality": 77 } ] }
+    { "finger": "RIGHT_THUMB", "template": "<base64>", "quality": 82, "image": "<base64 PNG>" },
+    { "finger": "LEFT_THUMB",  "template": "<base64>", "quality": 77, "image": "<base64 PNG>" } ] }
 ```
 **Receive** `200`
 ```json
@@ -568,7 +573,7 @@ POST https://10.8.0.1:8443/stm/v1/identity/biometrics/verify
 ```json
 { "customerId": "CIF00482913", "lookupRef": "lk_…", "purpose": "MOBILE_CHANGE",
   "face": { "image": "<base64>", "livenessScore": 0.97 },
-  "fingerprint": { "finger": "RIGHT_THUMB", "template": "<base64>", "quality": 82 } }
+  "fingerprint": { "finger": "RIGHT_THUMB", "template": "<base64>", "quality": 82, "image": "<base64 PNG>" } }
 ```
 **Receive** `200`
 ```json

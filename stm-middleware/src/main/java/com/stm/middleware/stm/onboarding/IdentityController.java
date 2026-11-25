@@ -8,6 +8,7 @@ import com.stm.middleware.stm.support.Captures;
 import com.stm.middleware.stm.support.Mrz;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -47,11 +48,14 @@ public class IdentityController {
         return c != null && c.acceptAll();
     }
 
+    private final com.stm.middleware.stm.biometrics.FingerprintMatching matching;
+
     public IdentityController(IdentityServices identity, CoreBanking core, Applications applications, Captures captures,
                               CustomerTokens customerTokens, SessionStore sessions, JdbcClient jdbc, Json json,
-                              StmAudit audit,
+                              StmAudit audit, com.stm.middleware.stm.biometrics.FingerprintMatching matching,
             org.springframework.beans.factory.ObjectProvider<com.stm.middleware.backend.sim.SimControl> sim) {
         this.sim = sim;
+        this.matching = matching;
         this.identity = identity;
         this.core = core;
         this.applications = applications;
@@ -343,9 +347,22 @@ public class IdentityController {
             // Phone lost: the face is one of the two factors, so it must really be checked.
             throw Errors.identityMismatch("NO_REFERENCE_PHOTO", 0).detail("offerTeller", true);
         }
-        // The bank's own template when the customer has enrolled; otherwise the national registry (IPRS).
+        // The bank's own prints when the customer has enrolled; otherwise the national registry (IPRS).
+        // The live print is really compared (matcher template from fingerprint.image or an ISO template) with every
+        // enrolled finger, so a different finger fails whatever label the kiosk sends.
         byte[] template = templateBytes(req);
-        Optional<IdentityServices.MatchResult> bank = core.matchEnrolledFingerprint(c.id(), finger(req), template, quality(req));
+        Optional<byte[]> probe = req.fingerprint() == null ? Optional.empty() : probeTemplate(req);
+        CoreBanking.Biometrics held = core.biometrics(c.id());
+        if (held.enrolled() && probe.isEmpty() && !lax) {
+            if (held.matchable()) {
+                throw Errors.validation("fingerprint.image",
+                        "Send the print image (fingerprint.image): it is compared with the print taken at account opening");
+            }
+            if (!held.fingers().contains(finger(req))) throw fingerNotEnrolled(held.fingers());
+        }
+        Optional<IdentityServices.MatchResult> bank = core.matchEnrolledFingerprint(c.id(), finger(req),
+                probe.orElse(template), quality(req));
+        if (held.enrolled() && bank.isEmpty() && !lax) throw fingerNotEnrolled(held.fingers());
         IdentityServices.MatchResult finger = bank.orElseGet(() -> reg
                 .map(rr -> identity.matchFingerprint(rr, finger(req), template, quality(req)))
                 .orElse(testMode() ? new IdentityServices.MatchResult("MATCH", 0.95) : null));
@@ -372,7 +389,7 @@ public class IdentityController {
         if (faceSent && face == null) {
             out.put("face", Map.of("result", "NOT_CHECKED", "reason", "NO_REFERENCE_PHOTO"));
         }
-        CoreBanking.Biometrics enrolled = core.biometrics(c.id());
+        CoreBanking.Biometrics enrolled = held;
         Map<String, Object> e = new LinkedHashMap<>();
         e.put("enrolled", enrolled.enrolled());
         e.put("fingers", enrolled.fingers());
@@ -397,6 +414,29 @@ public class IdentityController {
         return r;
     }
 
+    /** The live print as a matcher template: from fingerprint.image, else an ISO/ANSI fingerprint.template. */
+    private Optional<byte[]> probeTemplate(BiometricRequest req) {
+        String img = req.fingerprint().image();
+        byte[] image = img == null || img.isBlank() ? null : Captures.decode("fingerprint.image", img);
+        return matching.template(image, templateBytes(req));
+    }
+
+    private static final Map<String, String[]> FINGER_WORDS = Map.of(
+            "RIGHT_THUMB", new String[]{"right thumb", "kidole gumba cha kulia"},
+            "LEFT_THUMB", new String[]{"left thumb", "kidole gumba cha kushoto"},
+            "RIGHT_INDEX", new String[]{"right index finger", "kidole cha shahada cha kulia"},
+            "LEFT_INDEX", new String[]{"left index finger", "kidole cha shahada cha kushoto"});
+
+    /** The bank holds prints of other fingers only: ask for one of them, never fall back to the registry. */
+    private static StmException fingerNotEnrolled(List<String> fingers) {
+        String f = fingers.contains("RIGHT_THUMB") || fingers.isEmpty() ? "RIGHT_THUMB" : fingers.get(0);
+        String[] w = FINGER_WORDS.getOrDefault(f, new String[]{f, f});
+        return Errors.of(HttpStatus.UNPROCESSABLE_ENTITY, "FINGER_NOT_ENROLLED",
+                        "Please use your " + w[0] + ", the finger registered with the bank.",
+                        "Tafadhali tumia " + w[1] + ", kidole kilichosajiliwa na benki.", true)
+                .detail("enrolledFingers", fingers).detail("fingerToScan", f);
+    }
+
     private static byte[] templateBytes(BiometricRequest req) {
         if (req.fingerprint() == null) return new byte[0];
         String t = req.fingerprint().template();
@@ -406,6 +446,12 @@ public class IdentityController {
         } catch (IllegalArgumentException e) {
             return t.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         }
+    }
+
+    /** What the bank is given at account opening: the matcher template when the print could be read. */
+    private byte[] storedTemplate(BiometricRequest req) {
+        if (req.fingerprint() == null) return new byte[0];
+        return probeTemplate(req).orElse(templateBytes(req));
     }
 
     private static String finger(BiometricRequest req) {
@@ -423,15 +469,17 @@ public class IdentityController {
         jdbc.sql("""
                 INSERT INTO biometric_checks (id, session_id, application_id, customer_id, verification_id, face_result,
                     face_score, liveness_score, finger, finger_result, finger_score, finger_quality, overall, attempts_left,
-                    finger_template, matched_against, face_against)
-                VALUES (:id, :s, :a, :c, :v, :fr, :fs, :ls, :f, :gr, :gs, :q, :o, :l, :tpl, :ag, :fa)""")
+                    finger_template, matched_against, face_against, finger_method, finger_raw_score)
+                VALUES (:id, :s, :a, :c, :v, :fr, :fs, :ls, :f, :gr, :gs, :q, :o, :l, :tpl, :ag, :fa, :fm, :fraw)""")
                 .param("id", id).param("s", ctx.sessionId()).param("a", applicationId).param("c", customerId)
                 .param("v", verificationId).param("fr", face == null ? null : face.result())
                 .param("fs", face == null ? null : BigDecimal.valueOf(face.score()))
                 .param("ls", req.face() == null ? null : req.face().livenessScore())
                 .param("f", finger(req)).param("gr", finger.result()).param("gs", BigDecimal.valueOf(finger.score()))
                 .param("q", quality(req)).param("o", pass ? "PASS" : "FAIL").param("l", left)
-                .param("tpl", pass ? templateBytes(req) : null).param("ag", against).param("fa", face == null ? null : faceAgainst).update();
+                .param("tpl", pass ? storedTemplate(req) : null).param("ag", against).param("fa", face == null ? null : faceAgainst)
+                .param("fm", finger.method()).param("fraw", finger.rawScore() == null ? null : BigDecimal.valueOf(finger.rawScore()))
+                .update();
         if (req.face() != null) captures.store("BIOMETRIC", id, "FACE", Captures.decode("face.image", req.face().image()));
         if (req.fingerprint() != null && req.fingerprint().image() != null && !req.fingerprint().image().isBlank()) {
             captures.store("BIOMETRIC", id, "FINGERPRINT", Captures.decode("fingerprint.image", req.fingerprint().image()));
@@ -444,7 +492,13 @@ public class IdentityController {
                                                 String faceAgainst) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (face != null) out.put("face", Map.of("result", face.result(), "score", face.score(), "against", faceAgainst));
-        out.put("fingerprint", Map.of("result", finger.result(), "score", finger.score(), "against", against));
+        Map<String, Object> fp = new LinkedHashMap<>();
+        fp.put("result", finger.result());
+        fp.put("score", finger.score());
+        fp.put("against", against);
+        if (finger.method() != null) fp.put("method", finger.method());
+        if (finger.rawScore() != null) fp.put("matchScore", finger.rawScore());
+        out.put("fingerprint", fp);
         out.put("overall", "PASS");
         out.put("attemptsLeft", left);
         if (customerToken != null) out.put("customerToken", customerToken);

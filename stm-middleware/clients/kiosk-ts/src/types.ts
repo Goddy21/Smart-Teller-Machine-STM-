@@ -31,7 +31,7 @@ export type ErrorCode =
   | "IDEMPOTENCY_KEY_REQUIRED" | "SERVICE_UNAVAILABLE" | "CORE_UNAVAILABLE" | "OUT_OF_SERVICE" | "INTERNAL_ERROR"
   | "REQUEST_REJECTED" | "NOT_FOUND"
   // onboarding
-  | "IDENTITY_MISMATCH" | "BIOMETRIC_NO_MATCH" | "EXISTING_CUSTOMER" | "KRA_PIN_INVALID" | "SCREENING_REFERRED"
+  | "IDENTITY_MISMATCH" | "BIOMETRIC_NO_MATCH" | "FINGER_NOT_ENROLLED" | "EXISTING_CUSTOMER" | "KRA_PIN_INVALID" | "SCREENING_REFERRED"
   | "CONSENT_REQUIRED" | "TERMS_OUTDATED" | "APPLICATION_EXPIRED" | "OTP_INCORRECT" | "OTP_EXPIRED"
   | "OTP_TRIES_EXCEEDED" | "RESEND_TOO_SOON" | "SIM_SWAP_RISK"
   // cards
@@ -183,12 +183,14 @@ export interface BiometricRequest {
   purpose?: "MOBILE_CHANGE";
   face?: { image: string; livenessScore: number; livenessVendor?: string };
   /** image: optional PNG/JPEG preview of the print, shown to staff in the portal. */
+  /** image: the scanner's print image (PNG/JPEG/BMP, 500 dpi), base64. Always send it: prints are really compared. */
   fingerprint?: { finger: Finger; template?: string; quality: number; image?: string };
 }
 export interface BiometricResult {
   /** against: "BANK_PHOTO" (photo from account opening), "IPRS_PHOTO" (national registry) or "TEST_MODE". */
   face?: { against: string; score: number; result: "MATCH" | "NO_MATCH" };
-  fingerprint?: { against: string; score: number; result: "MATCH" | "NO_MATCH" };
+  /** method "MATCHER": the prints were really compared; matchScore is the similarity (40+ passes). */
+  fingerprint?: { against: string; score: number; result: "MATCH" | "NO_MATCH"; method?: "MATCHER"; matchScore?: number };
   overall: "PASS" | "FAIL";
   attemptsLeft: number;
   /** Card services (customerId + lookupRef, after the OTP): the token that unlocks C-2 … C-10. */
@@ -355,7 +357,7 @@ export interface CustomerProfile {
 /** M-2 */
 export interface AccountReactivated { accountId: string; masked: string; type: string; status: AccountStatus; reactivated: boolean; reference?: string }
 /** M-3 */
-export interface EnrolBiometricsRequest { fingerprints: { finger: Finger; template: string; quality: number }[]; consent: boolean }
+export interface EnrolBiometricsRequest { fingerprints: { finger: Finger; template: string; quality: number; image?: string }[]; consent: boolean }
 export interface BiometricsEnrolled { enrolled: true; fingers: Finger[]; enrolledAt: Iso; reference: string }
 /** M-4 */
 export interface MobileChangeStarted { changeRef: string; maskedCurrentMobile: string; maskedNewMobile: string; nextStep: "OTP"; otpPurpose: "MOBILE_CHANGE" }

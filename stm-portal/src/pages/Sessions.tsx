@@ -255,7 +255,10 @@ export function SessionBody({ s, timeline, compact = false, onChange }: {
               {s.biometrics.filter((b) => !b.applicationId).map((b) => (
                 <tr key={b.id}>
                   <td>{b.faceResult ? <><Badge value={b.faceResult} /><small className="muted"><br />against {label(AGAINST_LABEL, b.faceAgainst ?? "IPRS_PHOTO")}</small></> : <span className="muted">Not checked</span>}</td>
-                  <td><Badge value={b.fingerResult} /><small className="muted"><br />{fmt.words(b.finger)} against {label(AGAINST_LABEL, b.matchedAgainst)}</small></td>
+                  <td><Badge value={b.fingerResult} /><small className="muted"><br />{fmt.words(b.finger)} against {label(AGAINST_LABEL, b.matchedAgainst)}
+                    <br />{b.fingerMethod === "MATCHER"
+                      ? <>Prints compared: score <b>{b.fingerRawScore}</b> (pass at 40)</>
+                      : "Not compared: finger label and print quality only"}</small></td>
                   <td><Badge value={b.overall} />{b.overall === "FAIL" && <small className="muted"><br />{b.attemptsLeft} attempts left</small>}</td>
                   <td className="muted">{fmt.dateTime(b.createdAt)}</td>
                 </tr>

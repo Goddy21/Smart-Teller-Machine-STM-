@@ -40,10 +40,14 @@ public interface CoreBanking {
     record KycProfile(OffsetDateTime lastReviewedAt, String riskRating, boolean pep, String sanctions, List<String> flags) {}
 
     /** The bank's own fingerprint enrolment for a customer (none for customers who never enrolled). */
-    /** fingers: the bank's fingerprint templates; faceOnFile: the bank holds a reference photo (account opening). */
+    /**
+     * fingers: the bank's fingerprint templates; matchable: at least one of them can really be compared with a live
+     * print (a matcher template); faceOnFile: the bank holds a reference photo (account opening).
+     */
     record Biometrics(boolean enrolled, List<String> fingers, OffsetDateTime enrolledAt, String source,
-                      boolean faceOnFile, String faceSource) {}
+                      boolean faceOnFile, String faceSource, boolean matchable) {}
 
+    /** template: the matcher template (FingerprintMatching) when the print could be read, else what the kiosk sent. */
     record FingerTemplate(String finger, byte[] template, int quality) {}
 
     /** The specimen signature on the account mandate. */
@@ -109,7 +113,11 @@ public interface CoreBanking {
     /** Stores the bank's templates for these fingers (replacing earlier ones for the same finger). */
     Biometrics enrolBiometrics(String customerId, List<FingerTemplate> fingers, String source);
 
-    /** Matches a live fingerprint against the bank's enrolled template. Empty when the customer is not enrolled. */
+    /**
+     * Matches a live fingerprint against the bank's enrolled prints. template: the live print's matcher template when
+     * the middleware could make one; it is compared with every enrolled finger, so the label does not decide.
+     * Empty when the customer is not enrolled (or, without a comparable print, not for this finger).
+     */
     Optional<IdentityServices.MatchResult> matchEnrolledFingerprint(String customerId, String finger, byte[] template, int quality);
 
     /** Stores the bank's reference photo of the customer (replacing an earlier one). */
