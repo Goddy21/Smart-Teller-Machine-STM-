@@ -478,27 +478,57 @@ public class SimulatedBank implements CoreBanking, CardSystem, Collections {
     @Transactional
     public Card create(String customerId, String accountId, String product, String nameOnCard) {
         control.core();
+        // A full 16-digit card number (BIN 4512, valid Luhn check digit). Only the card system and the printer job
+        // hold it; everyone else sees the masked number.
+        String pan;
         String last4;
         String token;
         do {
-            last4 = String.format("%04d", RNG.nextInt(10_000));
+            pan = cardNumber("4512");
+            last4 = pan.substring(12);
             token = "tok_4512xxxx" + last4;
-        } while (jdbc.sql("SELECT count(*) FROM sim_cards WHERE pan_token = :t").param("t", token).query(Long.class).single() > 0);
+        } while (jdbc.sql("SELECT count(*) FROM sim_cards WHERE pan_token = :t OR pan = :p")
+                .param("t", token).param("p", pan).query(Long.class).single() > 0);
         String id = Ids.next("crd");
         jdbc.sql("""
-                INSERT INTO sim_cards (id, customer_id, account_id, pan_token, masked_pan, product, status, expiry)
-                VALUES (:id, :c, :a, :t, :m, :p, 'INACTIVE_PIN_REQUIRED', :e)""")
-                .param("id", id).param("c", customerId).param("a", accountId).param("t", token)
+                INSERT INTO sim_cards (id, customer_id, account_id, pan_token, masked_pan, product, status, expiry, pan)
+                VALUES (:id, :c, :a, :t, :m, :p, 'INACTIVE_PIN_REQUIRED', :e, :pan)""")
+                .param("id", id).param("c", customerId).param("a", accountId).param("t", token).param("pan", pan)
                 .param("m", "4512 •••• •••• " + last4).param("p", product)
                 .param("e", YearMonth.now().plusYears(4).toString()).update();
         return card(id).orElseThrow();
     }
 
+    /** 16 digits starting with the BIN, the last one the Luhn check digit. */
+    static String cardNumber(String bin) {
+        StringBuilder b = new StringBuilder(bin);
+        while (b.length() < 15) b.append(RNG.nextInt(10));
+        return b.append(luhnCheckDigit(b.toString())).toString();
+    }
+
+    static int luhnCheckDigit(String first15) {
+        int sum = 0;
+        for (int i = first15.length() - 1, pos = 0; i >= 0; i--, pos++) {
+            int v = first15.charAt(i) - '0';
+            if (pos % 2 == 0) { v *= 2; if (v > 9) v -= 9; }
+            sum += v;
+        }
+        return (10 - sum % 10) % 10;
+    }
+
+    static boolean luhnValid(String pan) {
+        return pan != null && pan.matches("\\d{12,19}")
+                && luhnCheckDigit(pan.substring(0, pan.length() - 1)) == pan.charAt(pan.length() - 1) - '0';
+    }
+
+    /** The printer job: card number, name, expiry and product (a real card system sends an encrypted EMV job). */
     @Override
     public String personalisationPayload(Card card, String nameOnCard) {
-        byte[] raw = new byte[96];
-        RNG.nextBytes(raw);
-        return "SIM-EMV:" + Base64.getEncoder().encodeToString(raw);
+        String pan = jdbc.sql("SELECT pan FROM sim_cards WHERE id = :id").param("id", card.id()).query(String.class).single();
+        String expiry = card.expiry() == null ? "" : card.expiry().substring(5, 7) + "/" + card.expiry().substring(2, 4);
+        String job = "{\"pan\":\"" + pan + "\",\"nameOnCard\":\"" + nameOnCard.replace("\"", "") + "\",\"expiry\":\""
+                + expiry + "\",\"product\":\"" + card.product() + "\",\"cardId\":\"" + card.id() + "\"}";
+        return "SIM-PERSO:" + Base64.getEncoder().encodeToString(job.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     @Override

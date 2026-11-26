@@ -5,9 +5,9 @@ import { request, readSse } from "./http";
  * production the gateway sets from the teller's SSO session.
  */
 
-export interface RingEvent { callId: string; terminalId: string; lang: string; txId: string }
+export interface RingEvent { callId: string; terminalId: string; lang: string; txId: string; ringSeconds?: number }
 export interface CancelledEvent { callId: string; reason: string }
-export interface EndedEvent { callId: string; reason: string }
+export interface EndedEvent { callId: string; reason: string; by?: "CUSTOMER" | "TELLER" | "SYSTEM" }
 export interface AcceptResult { url: string; token: string; room: string; txId: string; terminalId: string }
 export interface Heartbeat { available: boolean; present: boolean; stream: boolean }
 

@@ -145,6 +145,16 @@ def main():
             check("Expiring card offers RENEW", "RENEW" in cards.get("crd_T002", {}).get("actions", []))
             check("Fraud card shows FRAUD_BLOCKED", cards.get("crd_T003", {}).get("status") == "FRAUD_BLOCKED")
             check("Not-yet-active card shows INACTIVE", cards.get("crd_T004", {}).get("status") == "INACTIVE")
+            acc = accts.get("0190000105", {})
+            s, q = k.call("POST", "/stm/v1/cards/fee-quotes", {"customerId": lk["customerId"], "accountId": acc.get("accountId"),
+                          "journey": "NEW", "tier": "CLASSIC"})
+            ok = s == 200 and q.get("total") and round(float(q["amount"]) + float(q["tax"]), 2) == float(q["total"]) and q.get("expiresAt")
+            check("Card fee quote (POST /cards/fee-quotes): amount + tax = total", bool(ok), f"{s} {err(q)}")
+            if s == 200:
+                s, d = k.call("POST", f"/stm/v1/accounts/{acc.get('accountId')}/debit-check",
+                              {"amount": q["total"], "currency": q["currency"], "quoteId": q["quoteId"]})
+                check("Funds check (POST /accounts/{id}/debit-check) answers canDebit only", s == 200 and "canDebit" in d
+                      and "available" not in d and "balance" not in d, f"{s} {err(d)}")
         k.ct = None
     k.call("POST", f"/stm/v1/sessions/{k.sid}/end", {"reason": "CUSTOMER_FINISHED"}); k.sid = None
 
@@ -159,8 +169,24 @@ def main():
         s, r = k.call("POST", "/stm/v1/operators/login", {"username": "nobody-smoke", "pin": "000000"})
         check("Sign-in endpoint answers (wrong user refused)", s == 401 and err(r).startswith("OPERATOR_INVALID"), f"{s} {err(r)}")
         print("        (add --operator and --pin of a terminal user assigned to this kiosk to test a real sign-in)")
+    teller_call(k)
     fingerprint_matcher(k)
     summary()
+
+
+def teller_call(k):
+    """Places a teller call and hangs up: works whether or not a teller is signed in."""
+    print("\n6. Talk to a teller (D-8, D-9): status with the customer's message, hang up")
+    s, r = k.call("POST", "/stm/v1/sessions", {"trigger": "TOUCH", "language": "en"}); k.sid = r.get("sessionId")
+    s, c = k.call("POST", "/stm/v1/support/teller-calls", {"screen": "SMOKE", "language": "en"})
+    check("Call placed (D-8) with a message for the customer", s == 201 and c.get("message"), f"{s} {err(c)}")
+    if s == 201:
+        s, g = k.call("GET", f"/stm/v1/support/teller-calls/{c['callId']}")
+        check("Status (D-9) answers", s == 200 and g.get("status") in ("QUEUED", "RINGING", "CONNECTED", "NO_TELLER_AVAILABLE"),
+              f"{s} {err(g)}")
+        s, d = k.call("DELETE", f"/stm/v1/support/teller-calls/{c['callId']}")
+        check("Hang up (D-9 DELETE)", s == 200 and d.get("status") in ("CANCELLED", "ENDED", "NO_TELLER_AVAILABLE"), f"{s} {err(d)}")
+    k.call("POST", f"/stm/v1/sessions/{k.sid}/end", {"reason": "CUSTOMER_FINISHED"}); k.sid = None
 
 
 def fingerprint_matcher(k):
@@ -168,9 +194,9 @@ def fingerprint_matcher(k):
     and accepts the same finger (real comparison, in test mode too). Leaves one test customer "Test Customer Smoke"."""
     data = os.path.join(os.path.dirname(os.path.abspath(__file__)), "smoke-data")
     if not os.path.isdir(data):
-        print("\n6. Fingerprint matcher: skipped (smoke-data folder not found next to this script)"); return
+        print("\n7. Fingerprint matcher: skipped (smoke-data folder not found next to this script)"); return
     img = lambda f: base64.b64encode(open(os.path.join(data, f), "rb").read()).decode()
-    print("\n6. Fingerprint matcher: a different finger is refused, the same finger passes (B-5)")
+    print("\n7. Fingerprint matcher: a different finger is refused, the same finger passes (B-5)")
     s, r = k.call("POST", "/stm/v1/sessions", {"trigger": "TOUCH", "language": "en"}); k.sid = r.get("sessionId")
     s, t = k.call("GET", "/stm/v1/legal/terms?product=SAV_PERSONAL")
     s, r = k.call("POST", "/stm/v1/onboarding/applications", {"productCode": "SAV_PERSONAL", "termsId": t.get("termsId"),

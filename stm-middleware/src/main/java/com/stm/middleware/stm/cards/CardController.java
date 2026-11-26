@@ -43,11 +43,17 @@ public class CardController {
     private final StmAudit audit;
     private final com.stm.middleware.stm.services.Safeguards safeguards;
     private final com.stm.middleware.stm.services.ServiceEvents events;
+    private final com.stm.middleware.stm.support.Captures captures;
+    private final BigDecimal exciseRate;
 
     public CardController(Owned owned, CoreBanking core, CardSystem cms, DeviceHealthService health, SessionStore sessions,
                           Idempotency idempotency, Refs refs, SmsService sms, JdbcClient jdbc, Json json, StmAudit audit,
                           com.stm.middleware.stm.services.Safeguards safeguards,
-                          com.stm.middleware.stm.services.ServiceEvents events) {
+                          com.stm.middleware.stm.services.ServiceEvents events,
+                          com.stm.middleware.stm.support.Captures captures,
+                          @org.springframework.beans.factory.annotation.Value("${stm.fees.excise-rate:0.20}") BigDecimal exciseRate) {
+        this.captures = captures;
+        this.exciseRate = exciseRate;
         this.safeguards = safeguards;
         this.events = events;
         this.owned = owned;
@@ -106,13 +112,146 @@ public class CardController {
         return out;
     }
 
+    // ------------------------------------------------------------------ C-4b card fee quote, C-4c funds check
+
+    private static final java.time.ZoneId NAIROBI = java.time.ZoneId.of("Africa/Nairobi");
+
+    public record CardFeeQuoteRequest(@NotBlank String customerId, @NotBlank String accountId,
+                                      @NotBlank @Pattern(regexp = "NEW|LOST|STOLEN|DAMAGED|RENEWAL|PIN_RESET") String journey,
+                                      @NotBlank @Pattern(regexp = "CLASSIC|GOLD") String tier,
+                                      String replacesCardId, @Size(max = 40) String damageReason, Boolean renewal) {}
+
+    /**
+     * The card fee for one journey, as the kiosk shows it: amount + tax = total, two decimals, strings. The bank's
+     * tariff decides it; the first card of an account opened in this session is free (FREE_ENTITLEMENT), a PIN reset
+     * costs nothing (NO_FEE). The quote is valid for 10 minutes and is what C-5 debits, exactly.
+     */
+    @PostMapping("/cards/fee-quotes")
+    @Transactional
+    public Map<String, Object> cardFeeQuote(Ctx ctx, @Valid @RequestBody CardFeeQuoteRequest req) {
+        ctx.requireCustomer(req.customerId());
+        CoreBanking.Account a = owned.account(ctx, req.accountId());
+        if (req.replacesCardId() != null) owned.card(ctx, req.replacesCardId());
+        boolean newCard = "NEW".equals(req.journey());
+        String reason = "PIN_RESET".equals(req.journey()) ? "NO_FEE"
+                : newCard && firstCardFree(ctx, ctx.customerId(), a.id(), null).isPresent() ? "FREE_ENTITLEMENT" : null;
+        BigDecimal total = BigDecimal.ZERO.setScale(2);
+        BigDecimal tax = BigDecimal.ZERO.setScale(2);
+        boolean includesExcise = true;
+        String label = "Card fee";
+        if (reason == null) {
+            String tariff = "CARD_ISSUE_" + req.tier();
+            record T(String label, BigDecimal fee, boolean excise) {}
+            T t = jdbc.sql("SELECT label, fee, includes_excise FROM tariffs WHERE code = :c").param("c", tariff)
+                    .query((rs, n) -> new T(rs.getString(1), rs.getBigDecimal(2), rs.getBoolean(3))).optional()
+                    .orElseThrow(() -> Errors.notFound("TARIFF_NOT_FOUND", "No fee is set for this card", "Ada ya kadi haijawekwa"));
+            label = t.label();
+            includesExcise = t.excise();
+            if (t.excise()) {   // the tariff fee already includes excise duty: split it out
+                total = t.fee().setScale(2, java.math.RoundingMode.HALF_UP);
+                tax = total.multiply(exciseRate).divide(BigDecimal.ONE.add(exciseRate), 2, java.math.RoundingMode.HALF_UP);
+            } else {
+                tax = t.fee().multiply(exciseRate).setScale(2, java.math.RoundingMode.HALF_UP);
+                total = t.fee().setScale(2, java.math.RoundingMode.HALF_UP).add(tax);
+            }
+        }
+        BigDecimal amount = total.subtract(tax);
+        List<Map<String, Object>> breakdown = new ArrayList<>();
+        if (total.signum() > 0) {
+            breakdown.add(new LinkedHashMap<>(Map.of("label", label, "amount", amount.toPlainString())));
+            String pct = exciseRate.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString();
+            breakdown.add(new LinkedHashMap<>(Map.of("label", "Excise duty (" + pct + "%)", "amount", tax.toPlainString())));
+        }
+        String id = Ids.next("fq");
+        OffsetDateTime expires = OffsetDateTime.now(NAIROBI).plusMinutes(10).withNano(0);
+        jdbc.sql("""
+                INSERT INTO fee_quotes (id, session_id, customer_id, service, card_product, debit_account_id, lines, total,
+                                        currency, includes_excise, sufficient_funds, expires_at, journey, tax, reason_code,
+                                        replaces_card_id)
+                VALUES (:id, :s, :c, :sv, :p, :a, :l, :t, :cur, :e, :suf, :exp, :j, :tax, :r, :rep)""")
+                .param("id", id).param("s", ctx.sessionId()).param("c", ctx.customerId())
+                .param("sv", newCard ? "CARD_ISSUE" : "PIN_RESET".equals(req.journey()) ? "PIN_RESET" : "CARD_REPLACEMENT")
+                .param("p", req.tier()).param("a", a.id()).param("l", json.write(breakdown)).param("t", total)
+                .param("cur", a.currency()).param("e", includesExcise).param("suf", a.available().compareTo(total) >= 0)
+                .param("exp", expires).param("j", req.journey()).param("tax", tax).param("r", reason)
+                .param("rep", req.replacesCardId()).update();
+        audit.session(ctx, "CARD_FEE_QUOTED", "quoteId", id, "journey", req.journey(), "tier", req.tier(),
+                "accountId", a.id(), "total", total.toPlainString(), "reasonCode", reason);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("quoteId", id);
+        out.put("amount", amount.toPlainString());
+        out.put("tax", tax.toPlainString());
+        out.put("total", total.toPlainString());
+        out.put("currency", a.currency());
+        out.put("reasonCode", reason);
+        out.put("breakdown", breakdown);
+        out.put("expiresAt", expires.toString());
+        return out;
+    }
+
+    public record DebitCheckRequest(@NotBlank @Pattern(regexp = "\\d{1,13}(\\.\\d{1,2})?") String amount,
+                                    @Pattern(regexp = "[A-Z]{3}") String currency, String quoteId) {}
+
+    /** Can this account pay this amount right now? Never returns the balance: only canDebit, and the shortfall. */
+    @PostMapping("/accounts/{accountId}/debit-check")
+    public Map<String, Object> debitCheck(Ctx ctx, @PathVariable String accountId, @Valid @RequestBody DebitCheckRequest req) {
+        CoreBanking.Account a = owned.account(ctx, accountId);
+        BigDecimal amount = new BigDecimal(req.amount()).setScale(2, java.math.RoundingMode.HALF_UP);
+        if (req.currency() != null && !req.currency().equals(a.currency())) {
+            throw Errors.validation("currency", "The account is in " + a.currency());
+        }
+        if (req.quoteId() != null) {
+            record Q(String account, BigDecimal total) {}
+            Q q = jdbc.sql("SELECT debit_account_id, total FROM fee_quotes WHERE id = :id AND session_id = :s")
+                    .param("id", req.quoteId()).param("s", ctx.sessionId())
+                    .query((rs, n) -> new Q(rs.getString(1), rs.getBigDecimal(2))).optional()
+                    .orElseThrow(() -> Errors.notFound("QUOTE_NOT_FOUND", "Quote not found", "Nukuu haikupatikana"));
+            if (!q.account().equals(a.id())) throw Errors.validation("quoteId", "The quote was made for another account");
+            if (q.total().compareTo(amount) != 0) throw Errors.validation("amount", "The amount must equal the quote's total");
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (!a.active()) {
+            out.put("canDebit", false);
+            out.put("reason", "ACCOUNT_" + a.status());
+            return out;
+        }
+        boolean ok = a.available().compareTo(amount) >= 0;
+        out.put("canDebit", ok);
+        if (!ok) out.put("shortfall", amount.subtract(a.available()).setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
+        return out;
+    }
+
+    /** The account opened in this session whose product gives its first card free, if this is that account. */
+    private Optional<String> firstCardFree(Ctx ctx, String customerId, String accountId, String applicationId) {
+        return jdbc.sql("""
+                SELECT a.id FROM applications a JOIN products p ON p.code = a.product_code
+                WHERE a.session_id = :s AND a.customer_id = :c AND a.status = 'ACCOUNT_OPENED' AND a.account_id = :acc
+                  AND p.waive_card_fee AND (CAST(:app AS VARCHAR) IS NULL OR a.id = :app)
+                ORDER BY a.updated_at DESC LIMIT 1""")
+                .param("s", ctx.sessionId()).param("c", customerId).param("acc", accountId).param("app", applicationId)
+                .query(String.class).optional();
+    }
+
     // ------------------------------------------------------------------ C-5
 
+    /** The customer's signature for the card request (the kiosk's CS screen). */
+    public record Mandate(String image, Integer strokes, @Size(max = 20) String capturedWith) {}
+
+    /**
+     * quoteId (C-4b) or feeQuoteId (C-4); consentAt (when the customer agreed) counts as customerAuthorised.
+     * requestId: the kiosk's id for this request, also sent as the Idempotency-Key.
+     */
     public record OrderRequest(@NotBlank @Pattern(regexp = "LINK_AND_ISSUE|REPLACEMENT|NEW_CARD_SETUP") String service,
                                String accountId, @Pattern(regexp = "CLASSIC|GOLD") String cardProduct,
                                @Size(max = 26) @Pattern(regexp = "[A-Z .'-]*") String nameOnCard,
                                String feeQuoteId, Boolean customerAuthorised, String replacesCardId,
-                               String cardId, String applicationId) {}
+                               String cardId, String applicationId,
+                               String quoteId, @Size(max = 80) String requestId, @Valid Mandate mandate,
+                               @Size(max = 40) String consentAt, Boolean oldCardAlreadyBlocked, Boolean oldCardCaptured,
+                               @Size(max = 60) String entitlementId) {
+        String quote() { return feeQuoteId != null ? feeQuoteId : quoteId; }
+        boolean authorised() { return Boolean.TRUE.equals(customerAuthorised) || (consentAt != null && !consentAt.isBlank()); }
+    }
 
     @PostMapping("/cards/orders")
     public ResponseEntity<Object> order(Ctx ctx, @Valid @RequestBody OrderRequest req) {
@@ -143,6 +282,7 @@ public class CardController {
                 .param("s", ctx.sessionId()).param("c", customerId).param("app", req.applicationId())
                 .query((rs, n) -> new App(rs.getString(1), rs.getString(2), rs.getString(3), rs.getBoolean(4))).optional();
         boolean waived = app.isPresent() && app.get().accountId().equals(account.id()) && app.get().waive();
+        String quoteId = req.quote();
 
         if ("REPLACEMENT".equals(req.service())) {
             if (req.replacesCardId() == null) throw Errors.validation("replacesCardId", "replacesCardId is required");
@@ -163,37 +303,56 @@ public class CardController {
             if (hasCard) throw Errors.wrongState("This account already has a card. Choose Card Replacement instead.");
         }
 
+        // One step at the bank: the quote must be valid and unused, exactly its total is debited, then the card is
+        // allocated. Any failure after the debit reverses it. The same Idempotency-Key returns this first answer.
         BigDecimal fee = BigDecimal.ZERO;
+        BigDecimal tax = BigDecimal.ZERO;
         String feeRef = null;
-        if (!waived) {
-            if (req.feeQuoteId() == null) throw Errors.validation("feeQuoteId", "feeQuoteId from C-4 is required");
-            if (!Boolean.TRUE.equals(req.customerAuthorised())) {
-                throw Errors.validation("customerAuthorised", "The customer must authorise the fee");
+        if (!waived || quoteId != null) {
+            if (quoteId == null) throw Errors.validation("quoteId", "quoteId from POST /cards/fee-quotes is required");
+            if (!req.authorised()) {
+                throw Errors.validation("consentAt", "The customer must authorise the fee (consentAt)");
             }
-            record Q(String customer, String account, String product, BigDecimal total, OffsetDateTime expires, OffsetDateTime used) {}
+            record Q(String customer, String account, String product, BigDecimal total, OffsetDateTime expires,
+                     OffsetDateTime used, BigDecimal tax, BigDecimal rate) {}
             Q q = jdbc.sql("""
-                    SELECT customer_id, debit_account_id, card_product, total, expires_at, used_at FROM fee_quotes
+                    SELECT customer_id, debit_account_id, card_product, total, expires_at, used_at, tax FROM fee_quotes
                     WHERE id = :id AND session_id = :s FOR UPDATE""")
-                    .param("id", req.feeQuoteId()).param("s", ctx.sessionId())
+                    .param("id", quoteId).param("s", ctx.sessionId())
                     .query((rs, n) -> new Q(rs.getString(1), rs.getString(2), rs.getString(3), rs.getBigDecimal(4),
-                            rs.getObject(5, OffsetDateTime.class), rs.getObject(6, OffsetDateTime.class)))
+                            rs.getObject(5, OffsetDateTime.class), rs.getObject(6, OffsetDateTime.class), rs.getBigDecimal(7), null))
                     .optional().orElseThrow(() -> Errors.notFound("QUOTE_NOT_FOUND", "Quote not found", "Nukuu haikupatikana"));
             if (!q.customer().equals(customerId) || !q.account().equals(account.id()) || !q.product().equals(req.cardProduct())) {
-                throw Errors.validation("feeQuoteId", "The quote was made for a different account or card");
+                throw Errors.validation("quoteId", "The quote was made for a different account or card");
             }
             if (q.used() != null || q.expires().isBefore(OffsetDateTime.now())) throw Errors.quoteExpired();
-            jdbc.sql("UPDATE fee_quotes SET used_at = now() WHERE id = :id").param("id", req.feeQuoteId()).update();
-            fee = q.total();
-            feeRef = core.debit(account.id(), fee, account.currency(),
-                    "Card issuance fee " + req.cardProduct() + " " + ctx.deviceId(), "GL-FEES-CARD").coreRef();
+            jdbc.sql("UPDATE fee_quotes SET used_at = now() WHERE id = :id").param("id", quoteId).update();
+            if (!waived) {
+                fee = q.total();
+                tax = q.tax() != null ? q.tax()
+                        : fee.multiply(exciseRate).divide(BigDecimal.ONE.add(exciseRate), 2, java.math.RoundingMode.HALF_UP);
+                if (fee.signum() > 0) {
+                    feeRef = core.debit(account.id(), fee, account.currency(),
+                            "Card issuance fee " + req.cardProduct() + " " + ctx.deviceId(), "GL-FEES-CARD").coreRef();
+                }
+            }
         }
 
         String nameOnCard = req.nameOnCard() != null && !req.nameOnCard().isBlank() ? req.nameOnCard()
                 : app.map(App::nameOnCard).orElse(com.stm.middleware.stm.support.CardNames.options(
                         customer.fullName().substring(0, customer.fullName().lastIndexOf(' ')),
                         customer.fullName().substring(customer.fullName().lastIndexOf(' ') + 1)).get(0));
-        CardSystem.Card card = cms.create(customerId, account.id(), req.cardProduct(), nameOnCard);
-        String payload = cms.personalisationPayload(card, nameOnCard);
+        CardSystem.Card card;
+        String payload;
+        try {
+            card = cms.create(customerId, account.id(), req.cardProduct(), nameOnCard);
+            payload = cms.personalisationPayload(card, nameOnCard);
+        } catch (RuntimeException e) {
+            if (feeRef != null) {   // never keep the money without a card
+                try { core.reverse(feeRef, "Card not issued: fee returned"); } catch (RuntimeException ignored) { /* logged by core */ }
+            }
+            throw e;
+        }
         String orderId = Ids.next("co");
         String jobId = Ids.next("pj");
         String ref = refs.next("CRD");
@@ -202,12 +361,13 @@ public class CardController {
         jdbc.sql("""
                 INSERT INTO card_orders (id, session_id, terminal_id, customer_id, application_id, service, account_id,
                     card_product, name_on_card, fee_quote_id, fee_amount, fee_posted, fee_ref, replaces_card_id, card_id,
-                    masked_pan, job_id, status, steps, reference)
+                    masked_pan, job_id, status, steps, reference, request_id, fee_tax)
                 VALUES (:id, :s, :t, :c, :app, :sv, :a, :p, :n, :q, :fee, :posted, :ref, :rep, :card, :pan, :job,
-                    'PERSONALISING', :steps, :r)""")
+                    'PERSONALISING', :steps, :r, :req, :tax)""")
                 .param("id", orderId).param("s", ctx.sessionId()).param("t", ctx.terminalId()).param("c", customerId)
                 .param("app", app.map(App::id).orElse(null)).param("sv", req.service()).param("a", account.id())
-                .param("p", req.cardProduct()).param("n", nameOnCard).param("q", req.feeQuoteId()).param("fee", fee)
+                .param("p", req.cardProduct()).param("n", nameOnCard).param("q", quoteId).param("fee", fee)
+                .param("req", req.requestId()).param("tax", tax)
                 .param("posted", feeRef != null).param("ref", feeRef).param("rep", req.replacesCardId())
                 .param("card", card.id()).param("pan", card.maskedPan()).param("job", jobId)
                 .param("steps", json.write(steps)).param("r", ref).update();
@@ -216,7 +376,13 @@ public class CardController {
         sessions.setFlow(ctx.sessionId(), app.isPresent() ? "ACCOUNT_OPENING" : "CARD_SERVICES");
         audit.session(ctx, "CARD_ORDERED", "orderId", orderId, "service", req.service(), "cardId", card.id(),
                 "accountId", account.id(), "product", req.cardProduct(), "fee", fee.toPlainString(), "feeRef", feeRef,
-                "waived", waived, "replacesCardId", req.replacesCardId(), "reference", ref);
+                "waived", waived, "replacesCardId", req.replacesCardId(), "reference", ref, "requestId", req.requestId(),
+                "consentAt", req.consentAt(), "oldCardAlreadyBlocked", req.oldCardAlreadyBlocked(),
+                "oldCardCaptured", req.oldCardCaptured(), "entitlementId", req.entitlementId());
+        if (req.mandate() != null && req.mandate().image() != null && !req.mandate().image().isBlank()) {
+            captures.store("CARD_ORDER", orderId, "SIGNATURE",
+                    com.stm.middleware.stm.support.Captures.decode("mandate.image", req.mandate().image()));
+        }
         Map<String, Object> feeOut = new LinkedHashMap<>();
         feeOut.put("posted", feeRef != null);
         feeOut.put("transactionRef", feeRef);
@@ -228,6 +394,13 @@ public class CardController {
         out.put("cardId", card.id());
         out.put("maskedPan", card.maskedPan());
         out.put("fee", feeOut);
+        Map<String, Object> charged = new LinkedHashMap<>();
+        charged.put("amount", fee.subtract(tax).setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
+        charged.put("tax", tax.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
+        charged.put("total", fee.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
+        charged.put("currency", account.currency());
+        out.put("charged", charged);
+        if (req.requestId() != null) out.put("requestId", req.requestId());
         out.put("personalisation", Map.of("jobId", jobId, "payloadForPrinter", payload));
         out.put("reference", ref);
         return out;
@@ -323,7 +496,8 @@ public class CardController {
     // ------------------------------------------------------------------ C-7
 
     public record DispenseRequest(@NotBlank @Pattern(regexp = "TAKEN|RETAINED|SPOILED") String outcome,
-                                  @Pattern(regexp = "PASS|FAIL") String qualityCheck, @Size(max = 30) String cardSerial) {}
+                                  @Pattern(regexp = "PASS|FAIL") String qualityCheck, @Size(max = 30) String cardSerial,
+                                  @Size(max = 80) String requestId) {}
 
     @PostMapping("/cards/orders/{orderId}/dispense")
     @AllowEndedSession

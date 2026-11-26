@@ -38,7 +38,12 @@ public class CallControlClient {
 
     /** The call's state (call-control GET /api/calls/{id}, stm-video v11+). */
     public String state(String terminal, String callId) {
-        return send("GET", "/api/calls/" + callId, terminal, null).path("state").asText();
+        return status(terminal, callId).path("state").asText();
+    }
+
+    /** {state, endedBy, endReason, ringSeconds, ...}: endedBy / endReason only on calls that ended (stm-video v12+). */
+    public JsonNode status(String terminal, String callId) {
+        return send("GET", "/api/calls/" + callId, terminal, null);
     }
 
     /** {url, token, room}: a short-lived LiveKit join token for the kiosk, once the call is CONNECTED. */

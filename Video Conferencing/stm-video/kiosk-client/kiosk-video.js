@@ -9,6 +9,8 @@ const MASKED_STATES = new Set(["PIN_ENTRY", "CARD_DATA_ENTRY"]); // never mirror
 // camera, "GRGBanking SIDR-001 Image Device" = ID scanner imaging. Fallback when a label is missing: 1st / 2nd camera.
 const CAM_LABELS = { face: "DC003-EA(V)", id: "LHT-820VM31B" };
 const FINAL = new Set(["ENDED", "ABANDONED"]);
+// Gateway (D-9) statuses that end the call for the kiosk.
+const GATEWAY_FINAL = new Set(["ENDED", "CANCELLED", "NO_TELLER_AVAILABLE"]);
 
 export class VideoSession {
   /** deps: {
@@ -75,9 +77,10 @@ export class VideoSession {
               this.deps.onDropped();
             });
           }
-          if (d.status === "ENDED" || d.status === "CANCELLED") {
-            const fin = d.status === "CANCELLED" ? "ABANDONED" : "ENDED";
-            this.close().finally(() => this.deps.onEnded?.(fin));
+          if (GATEWAY_FINAL.has(d.status)) {
+            const fin = d.status === "ENDED" ? "ENDED" : d.status === "NO_TELLER_AVAILABLE" ? "NO_TELLER_AVAILABLE" : "ABANDONED";
+            this.lastResult = d;   // endedBy, reason, message / messageSw to show the customer
+            this.close().finally(() => this.deps.onEnded?.(fin, d));
             return;
           }
         }
@@ -106,6 +109,17 @@ export class VideoSession {
   #showTeller(visible) {
     if (visible && this.tellerTrack && this.tv?.el) this.tellerTrack.attach(this.tv.el);
     this.tv?.cb?.(visible && !!this.tellerTrack);
+  }
+
+  /** The customer hangs up (or cancels while waiting). The call ends for the teller too: their console closes it. */
+  async hangUp() {
+    const id = this.callId;
+    await this.close();
+    if (!id) return;
+    const g = this.deps.gateway;
+    const url = g ? `${g.base ?? "/stm/v1"}/support/teller-calls/${id}` : `${this.api}/calls/${id}`;
+    await fetch(url, { method: "DELETE", headers: g ? (g.headers?.() ?? {}) : {}, keepalive: true }).catch(() => {});
+    this.callId = null;
   }
 
   cancel() {

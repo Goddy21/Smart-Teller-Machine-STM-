@@ -59,7 +59,7 @@ Show `message` / `messageSw` to the customer as is. Common codes: `VALIDATION_ER
 | Journey | Calls |
 |---|---|
 | Open an account | D-2 → B-1 → B-2 → B-3 → B-4 → B-5 → B-6 → B-7 → B-8 → B-9 → B-10 → B-11 → B-12 → C-5 (applicationId) → C-6 … → C-7 → C-8 → C-9 → R-1 → D-4 |
-| Card services, no card | D-2 → C-1 → KYC status → SIM-swap check → B-9 (CARD_SERVICES) → B-10 → B-5 (customerId + lookupRef) → C-2 → C-3 → C-4 → C-5 → C-6 … → C-7 → C-8 → C-9 → D-4 |
+| Card services, no card | D-2 → C-1 → KYC status → SIM-swap check → B-9 (CARD_SERVICES) → B-10 → B-5 (customerId + lookupRef) → C-2 → C-3 → C-4b → C-4c → C-5 → C-6 … → C-7 → C-8 → C-9 → D-4 |
 | Card care (PIN, freeze, lost) | verify as above (or S-1 → S-2 for P-2, P-4, C-10) → M-1 → C-2 → P-2 / P-3 / P-4 / P-5 / C-10 → D-4 |
 | Existing customer's record | verify as above → M-1 → M-3 (fingerprints) → M-7 (signature) → M-2 (dormant account) → D-4 |
 | Change phone number | verify as above (phone lost: C-1 → B-5 with `purpose: MOBILE_CHANGE`, face + thumbprint) → M-4 → B-9 (MOBILE_CHANGE) → B-10 → M-5 → D-4 |
@@ -67,7 +67,7 @@ Show `message` / `messageSw` to the customer as is. Common codes: `VALIDATION_ER
 | Deposit | D-2 → K-1 → K-2 → K-3 → K-4 (or K-5) → R-1 → D-4 |
 | Forex, bank buys | D-2 → X-1 → B-4 (FOREX) → X-2 → X-3 → X-4 → X-5 → W-3 → D-4 |
 | Statement | D-2 (CARD) → S-1 → S-2 → S-4 → S-5 → S-6 (FULL) → D-4 |
-| Help on any screen | D-8 → D-9 (poll) → join `media` → D-9 DELETE to cancel |
+| Help on any screen | D-8 → D-9 (poll) → join `media` → D-9 DELETE to hang up or cancel |
 
 ## D · Device and session
 
@@ -282,7 +282,7 @@ Response `200`:
 
 `POST /stm/v1/support/teller-calls`  ·  needs `X-Session-Id`
 
-503 VIDEO_UNAVAILABLE when call-control is down.
+Places the call. Then poll D-9 every 2 s. 503 VIDEO_UNAVAILABLE when the call service is down.
 
 Request:
 ```json
@@ -298,6 +298,9 @@ Response `201`:
 {
   "callId": "f1c6588e-0552-490c-bc88-fac5bace2d8f",
   "status": "QUEUED",
+  "callState": "QUEUED",
+  "message": "Connecting you to a teller. Please wait…",
+  "messageSw": "Tunakuunganisha na mhudumu. Tafadhali subiri…",
   "estimatedWaitSec": 45,
   "media": null
 }
@@ -306,28 +309,63 @@ Response `201`:
 
 `GET /stm/v1/support/teller-calls/{callId}`  ·  needs `X-Session-Id`
 
-Poll every 2 s. When a teller answers: `status: CONNECTED`, `media: {provider: "webrtc", roomUrl, room, token}` (join the LiveKit room).
+Poll every 2 s. Every answer carries `message` / `messageSw`: the line to show the customer.
 
-Response `200`:
+| `status` | What is happening | Kiosk |
+|---|---|---|
+| `QUEUED` | Waiting for a free teller | "Connecting you to a teller. Please wait…" |
+| `RINGING` | A teller's console is ringing (`ringSeconds`: 45). Unanswered, the call goes back to `QUEUED` for the next teller | "Calling a teller…" |
+| `CONNECTED` | The teller answered: join `media` `{provider: "webrtc", roomUrl, room, token}` | Show the video |
+| `NO_TELLER_AVAILABLE` | Nobody is signed in to take calls (after 10 s), or every teller stayed busy for 2 minutes. The call is over | "No teller is available right now. Please try again in a few minutes, or visit the banking hall." |
+| `ENDED` | The call ended. `endedBy`: `TELLER` (`reason` TELLER_ENDED), `CUSTOMER` (CUSTOMER_HUNG_UP) or `SYSTEM` (CUSTOMER_DID_NOT_RECONNECT, ROOM_CLOSED) | "The teller has ended the call. Thank you.", … |
+| `CANCELLED` | The customer cancelled while waiting or ringing (`reason` CUSTOMER_CANCELLED) | Back to the screen they called from |
+
+`NO_TELLER_AVAILABLE`, `ENDED` and `CANCELLED` are final: stop polling and leave the video room.
+
+Response `200` (ringing):
 ```json
 {
   "callId": "f1c6588e-0552-490c-bc88-fac5bace2d8f",
-  "status": "QUEUED",
-  "callState": "QUEUED",
+  "status": "RINGING",
+  "callState": "RINGING",
+  "message": "Calling a teller…",
+  "messageSw": "Tunampigia mhudumu…",
+  "ringSeconds": 45,
   "media": null
 }
 ```
-### D-9 · Cancel the teller call
-
-`DELETE /stm/v1/support/teller-calls/{callId}`  ·  needs `X-Session-Id`
-
-Response `200`:
+Response `200` (the teller hung up):
 ```json
 {
   "callId": "f1c6588e-0552-490c-bc88-fac5bace2d8f",
-  "status": "CANCELLED"
+  "status": "ENDED",
+  "callState": "ENDED",
+  "endedBy": "TELLER",
+  "reason": "TELLER_ENDED",
+  "message": "The teller has ended the call. Thank you.",
+  "messageSw": "Mhudumu amemaliza simu. Asante.",
+  "media": null
 }
 ```
+### D-9 · Hang up or cancel the teller call
+
+`DELETE /stm/v1/support/teller-calls/{callId}`  ·  needs `X-Session-Id`
+
+**Call this whenever the customer taps End call / Hang up / Cancel**, at any point, and leave the LiveKit room. While waiting or ringing it cancels the call (the ringing teller's console stops). Once connected it ends the call **for the teller too**: their console closes the call by itself and they are free for the next customer, so the teller does not have to hang up as well. Calling it again after the call ended is harmless.
+
+Response `200` (hung up during the call):
+```json
+{
+  "callId": "f1c6588e-0552-490c-bc88-fac5bace2d8f",
+  "status": "ENDED",
+  "endedBy": "CUSTOMER",
+  "reason": "CUSTOMER_HUNG_UP",
+  "message": "You ended the call.",
+  "messageSw": "Umemaliza simu."
+}
+```
+Response `200` (cancelled while waiting): `status: CANCELLED`, `reason: CUSTOMER_CANCELLED`.
+
 ### — · Signaling ticket (remote commands)
 
 `POST /stm/v1/signaling/ticket`
@@ -1172,20 +1210,72 @@ Response `200`:
   "expiresAt": "2026-11-06T14:33:20.425077517+03:00"
 }
 ```
+### C-4b · Card fee quote (card journeys)
+
+`POST /stm/v1/cards/fee-quotes`  ·  needs `X-Session-Id`, `X-Customer-Token`
+
+Call it when the card-services request screen opens. `journey`: NEW, LOST, STOLEN, DAMAGED, RENEWAL or PIN_RESET; `tier`: CLASSIC or GOLD. Replacements and renewals may also send `replacesCardId`, `damageReason`, `renewal`.
+
+The bank's tariff decides the fee; the kiosk only shows it. Amounts are strings with two decimals and `total` = `amount` + `tax` (excise duty, included in the tariff). Free: `total: "0.00"` with `reasonCode` FREE_ENTITLEMENT (the first card of an account opened in this session) or NO_FEE (PIN reset). The quote is valid until `expiresAt` (10 minutes) and can be used once; after that ask for a new one.
+
+Request:
+```json
+{
+  "customerId": "CIF00900001",
+  "accountId": "acc_T5SV",
+  "journey": "NEW",
+  "tier": "CLASSIC"
+}
+```
+Response `200`:
+```json
+{
+  "quoteId": "fq_6MP1NXQK57F6",
+  "amount": "333.33",
+  "tax": "66.67",
+  "total": "400.00",
+  "currency": "KES",
+  "reasonCode": null,
+  "breakdown": [
+    { "label": "Classic debit card", "amount": "333.33" },
+    { "label": "Excise duty (20%)", "amount": "66.67" }
+  ],
+  "expiresAt": "2026-11-26T10:49:41+03:00"
+}
+```
+### C-4c · Funds check
+
+`POST /stm/v1/accounts/{accountId}/debit-check`  ·  needs `X-Session-Id`, `X-Customer-Token`
+
+Straight after C-4b; skip it when the total is 0. Never returns the balance. With `quoteId`, `amount` must equal the quote's total. An account that cannot be debited (frozen, dormant) answers `canDebit: false` with `reason`.
+
+Request:
+```json
+{ "amount": "400.00", "currency": "KES", "quoteId": "fq_6MP1NXQK57F6" }
+```
+Response `200`: `{ "canDebit": true }` or `{ "canDebit": false, "shortfall": "120.00" }`
+
 ### C-5 · Order the card (C5)
 
 `POST /stm/v1/cards/orders`  ·  needs `X-Session-Id`, `X-Customer-Token`, `Idempotency-Key`
 
-`service`: LINK_AND_ISSUE, REPLACEMENT (replacesCardId), NEW_CARD_SETUP (cardId). Pass `feeQuoteId` + `customerAuthorised: true` when a fee applies; `applicationId` right after B-12 (fee waived).
+`service`: LINK_AND_ISSUE, REPLACEMENT (replacesCardId), NEW_CARD_SETUP (cardId). When a fee applies pass `quoteId` (C-4b; `feeQuoteId` from C-4 also works) and `consentAt`, when the customer agreed (`customerAuthorised: true` also works); `applicationId` right after B-12 (fee waived).
+
+**One step at the bank:** the quote is checked (valid, not expired, not used, same account and card type; otherwise 4xx and nothing is charged), exactly the quote's total is debited, and the card is allocated. If the card cannot be allocated the debit is reversed. **Idempotent:** send `Idempotency-Key: <requestId>`; a resend after a timeout returns the first answer (`Idempotent-Replayed: true`) and never debits twice or makes a second card. Also accepted: `requestId`, `mandate {image, strokes, capturedWith}` (the signature, kept with the order), and for replacements `oldCardAlreadyBlocked`, `oldCardCaptured`, `entitlementId`.
+
+`charged` is what was debited (`total` equals the quote's total). Every card has its own 16-digit card number: `maskedPan` shows the last four digits; the full number is only in the card system and in `personalisation.payloadForPrinter`, the job for the card printer.
 
 Request:
 ```json
 {
   "service": "LINK_AND_ISSUE",
-  "accountId": "acc_XER71C0YH7PC",
+  "accountId": "acc_T5SV",
   "cardProduct": "CLASSIC",
-  "nameOnCard": "AMARA N KAMAU",
-  "applicationId": "app_PS03612K55WY"
+  "nameOnCard": "PATRICK M TENDWA",
+  "quoteId": "fq_6MP1NXQK57F6",
+  "requestId": "req-a75781bc-42ea-4ea4-8eaa-3dfae650bf6e",
+  "mandate": { "image": "<base64 PNG>", "strokes": 14, "capturedWith": "STYLUS" },
+  "consentAt": "2026-11-26T10:05:12+03:00"
 }
 ```
 Response `201`:
@@ -1195,12 +1285,13 @@ Response `201`:
   "cardId": "crd_7910PPJSPNB0",
   "maskedPan": "4512 •••• •••• 2979",
   "fee": {
-    "posted": false,
-    "transactionRef": null,
-    "amount": "0.00",
-    "currency": "KES",
-    "waived": true
+    "posted": true,
+    "transactionRef": "FT263309NB77",
+    "amount": "400.00",
+    "currency": "KES"
   },
+  "charged": { "amount": "333.33", "tax": "66.67", "total": "400.00", "currency": "KES" },
+  "requestId": "req-a75781bc-42ea-4ea4-8eaa-3dfae650bf6e",
   "personalisation": {
     "payloadForPrinter": "<printer payload>",
     "jobId": "pj_AB7NY2ZAWR1A"
@@ -1263,7 +1354,7 @@ Response `200`:
 
 `POST /stm/v1/cards/orders/{orderId}/dispense`  ·  needs `X-Session-Id`
 
-`outcome`: TAKEN, RETAINED or SPOILED (the card is destroyed at the CMS).
+`outcome`: TAKEN, RETAINED or SPOILED (the card is destroyed at the CMS). Optional `requestId` (the order's) is accepted.
 
 Request:
 ```json

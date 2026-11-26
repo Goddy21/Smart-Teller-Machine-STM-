@@ -15,6 +15,9 @@ livekit:
   api-url: ${LIVEKIT_API_URL:http://localhost:7880}     # server-to-server (Egress API)
 callcontrol:
   teller-limit: 5000   # per-teller approval limit; above this the orchestrator needs supervisor override
+  ring-seconds: ${RING_SECONDS:45}               # how long one teller's console rings (like a phone, about 45 s)
+  max-queue-seconds: ${MAX_QUEUE_SECONDS:120}    # waiting this long with every teller busy: "no teller available"
+  no-teller-grace-seconds: ${NO_TELLER_GRACE_SECONDS:10}   # nobody signed in to take calls: tell the customer after this
 storage:               # S3-compatible bucket with Object Lock enabled
   endpoint: ${STORAGE_ENDPOINT:http://localhost:9000}
   public-endpoint: ${STORAGE_PUBLIC_ENDPOINT:http://localhost:9000}   # host auditors' browsers can reach, used in pre-signed URLs

@@ -205,7 +205,8 @@ $("consentYes").onclick = async () => {
     },
     onDropped: () => { T.dropped++; log("video dropped"); },
     onWarn: warn,
-    onEnded: s => { T.ended = s; reset(s === "ENDED" ? "The teller ended the call. Thank you." : "Call cancelled."); },
+    onEnded: (s, d) => { T.ended = s; reset(d?.message ?? (s === "ENDED" ? "The call has ended. Thank you."
+      : s === "NO_TELLER_AVAILABLE" ? "No teller is available right now. Please try again later." : "Call cancelled.")); },
   });
   session.setTellerVideo($("teller"), tellerVideo); T.session = session;
   try {
@@ -226,7 +227,7 @@ const tellerVideo = visible => {
 tellerVideo(false);
 
 $("cancel").onclick = async () => { if (session?.callId) { const r = await session.cancel(); log("cancel: HTTP " + r.status); } };
-$("hangup").onclick = async () => { await session?.close(); reset("You hung up. (The teller still has to end the call on their side.)"); };
+$("hangup").onclick = async () => { await session?.hangUp(); reset("You hung up. The teller's console closes the call too."); };
 document.querySelectorAll("[data-fsm]").forEach(b => b.onclick = () => {
   const n = b.dataset.fsm, m = MODELS[n]; fsm = { name: n, model: typeof m === "function" ? m() : m };
   session?.mirror(); log("mirrored screen " + n);

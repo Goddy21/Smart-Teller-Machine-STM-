@@ -11,6 +11,7 @@ import type {
   SmsRequest, StartApplicationRequest, StartSessionRequest, Statement, StatementOption, StatementRequest,
   SubmitRequest, Tariffs, TellerCall, TellerCallRequest, Terms, WithdrawalAuthorised, WithdrawalLimits,
   WithdrawConfirmRequest, WithdrawRequest, WsTicket,
+  CardFeeQuote, CardFeeQuoteRequest, DebitCheck,
   AccountReactivated, BiometricsEnrolled, CardServiceDone, CustomerProfile, EnrolBiometricsRequest, MobileChanged,
   MobileChangeStarted, PinChangeRequest, PinResetRequest, SignatureOnFile, SignatureRegistered, TempBlockReason,
 } from "./types";
@@ -223,6 +224,7 @@ export class StmClient {
   requestTeller(r: TellerCallRequest) { return this.call<TellerCall>("POST", "/support/teller-calls", { language: this.language, ...r }); }
   /** D-9 */
   tellerCall(callId: string) { return this.call<TellerCall>("GET", `/support/teller-calls/${callId}`); }
+  /** Hang up (connected: ends the call for the teller too) or cancel while waiting. */
   cancelTellerCall(callId: string) { return this.call<TellerCall>("DELETE", `/support/teller-calls/${callId}`); }
 
   /** A-1. The device agent uploads its electronic journal in signed batches (HMAC-SHA256 with the terminal key). */
@@ -317,6 +319,12 @@ export class StmClient {
   /** C-4 */
   quoteFee(r: FeeQuoteRequest) { return this.call<FeeQuote>("POST", "/fees/quote", r, { customer: true }); }
   /** C-5. Charges the fee and starts printing. */
+  /** C-4b: the fee for a card journey (NEW, LOST, STOLEN, DAMAGED, RENEWAL, PIN_RESET). */
+  cardFeeQuote(r: CardFeeQuoteRequest) { return this.call<CardFeeQuote>("POST", "/cards/fee-quotes", r, { customer: true }); }
+  /** C-4c: can this account pay this amount? Never returns the balance. */
+  debitCheck(accountId: string, amount: string, quoteId?: string, currency = "KES") {
+    return this.call<DebitCheck>("POST", `/accounts/${accountId}/debit-check`, { amount, currency, quoteId }, { customer: true });
+  }
   orderCard(r: CardOrderRequest, idempotencyKey: string) { return this.call<CardOrder>("POST", "/cards/orders", r, { idem: idempotencyKey, customer: true }); }
   /** C-6. Screen C4 "Printing your card": poll every second. */
   cardOrder(orderId: string) { return this.call<CardOrderProgress>("GET", `/cards/orders/${orderId}`); }

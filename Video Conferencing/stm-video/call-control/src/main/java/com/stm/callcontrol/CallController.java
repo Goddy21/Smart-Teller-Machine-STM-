@@ -46,12 +46,15 @@ public class CallController {
     var c = svc.get(id);
     if (c == null || !c.terminalId.equals(terminal)) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND);
     svc.touch(id);   // the customer is still waiting at the kiosk
-    return Map.of("callId", c.id, "state", c.state, "txId", c.txId == null ? "" : c.txId, "createdAt", c.createdAt);
+    Map<String, Object> out = new java.util.LinkedHashMap<>();
+    out.put("callId", c.id); out.put("state", c.state); out.put("txId", c.txId == null ? "" : c.txId); out.put("createdAt", c.createdAt);
+    out.put("endedBy", c.endedBy); out.put("endReason", c.endReason); out.put("ringSeconds", svc.ringSeconds);
+    return out;
   }
   @GetMapping(path = "/api/calls/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   SseEmitter kioskEvents(@PathVariable String id, @RequestHeader("X-Terminal-Id") String terminal) { return svc.kioskStream(id, terminal); }
   @DeleteMapping("/api/calls/{id}")
-  void cancel(@PathVariable String id, @RequestHeader("X-Terminal-Id") String terminal) { svc.abandon(id, terminal); }
+  void cancel(@PathVariable String id, @RequestHeader("X-Terminal-Id") String terminal) { svc.hangUp(id, terminal); }
   /** The kiosk reports that the customer saw the recording notice and chose to continue. */
   @PostMapping("/api/calls/{id}/consent")
   void consent(@PathVariable String id, @RequestHeader("X-Terminal-Id") String terminal, @RequestBody Consent b) {

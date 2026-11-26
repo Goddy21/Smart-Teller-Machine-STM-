@@ -19,7 +19,7 @@ import { Ringtone } from "./Ringtone";
  * receive-only participant, so it never appears here and never counts as the customer.
  */
 
-export const RING_SECONDS = 22;          // how long the service rings one teller
+export const RING_SECONDS = 45;          // how long the service rings one teller (the ring event carries the real value)
 const HEARTBEAT_MS = 20_000;             // presence expires after 60 s without a heartbeat
 const STREAM_SILENCE_MS = 45_000;        // no bytes (not even a ping) for this long = dead stream
 const KIOSK_JOIN_WAIT_MS = 15_000;
@@ -194,7 +194,7 @@ export class TellerConsole {
   // ------------------------------------------------------------------ ringing
   private onRing(e: RingEvent) {
     clearInterval(this.ringTimer);
-    this.set({ ring: { ...e, left: RING_SECONDS } });
+    this.set({ ring: { ...e, left: e.ringSeconds ?? RING_SECONDS } });
     this.ringtone.start(`Kiosk ${e.terminalId}${e.lang ? ` (${e.lang.toUpperCase()})` : ""} is calling`);
     this.ringTimer = setInterval(() => {
       const r = this.state.ring;
@@ -372,11 +372,13 @@ export class TellerConsole {
     await this.cleanup("Call ended. You are available for the next call.");
   }
 
-  /** The service ended the call (customer did not reconnect in time, or the room closed). */
+  /** The customer hung up, or the service ended the call (customer did not reconnect in time, or the room closed). */
   private async onEnded(e: EndedEvent) {
     if (!this.state.call || this.state.call.id !== e.callId) return;
     try { await this.api.end(e.callId); } catch { /* idempotent: makes this teller available again */ }
-    await this.cleanup(`The call was ended by the service (${e.reason}). You are available for the next call.`);
+    await this.cleanup(e.by === "CUSTOMER"
+      ? "The customer hung up. You are available for the next call."
+      : `The call was ended by the service (${e.reason}). You are available for the next call.`);
   }
 
   private async cleanup(message: string) {

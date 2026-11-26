@@ -64,7 +64,7 @@ const TONES: Record<string, Tone> = {
   // messaging and receipts
   QUEUED: "neutral", SENT: "good", DELIVERED: "good", PRINTED: "good",
   // calls
-  RINGING: "warn", CONNECTED: "good", ABANDONED: "neutral", MISSED: "warn",
+  RINGING: "warn", CONNECTED: "good", ABANDONED: "neutral", MISSED: "warn", NO_TELLER_AVAILABLE: "warn",
   // fleet
   OK: "good", IN_SERVICE: "good", LOCKED: "bad", WARNING: "warn", DEGRADED: "warn", OUT_OF_SERVICE: "bad", MAINTENANCE: "warn",
   PAPER_LOW: "warn", PAPER_OUT: "bad", JAMMED: "bad", OFFLINE: "bad", REVOKED: "bad", DISABLED: "bad",

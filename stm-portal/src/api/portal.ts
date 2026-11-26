@@ -156,7 +156,8 @@ export interface SessionDetail extends SessionRow {
   statements: { id: string; accountId: string; type: string; periodMonths: number | null; fee: number; feeRef: string | null; pages: number | null; reference: string; createdAt: string }[];
   receipts: { id: string; transactionRef: string; delivery: string; printStatus: string; lines: string[]; createdAt: string }[];
   sms: { id: string; template: string; body: string; status: string; createdAt: string }[];
-  tellerCalls: { id: string; screen: string | null; flow: string | null; applicationId: string | null; language: string; status: string; createdAt: string; updatedAt: string }[];
+  tellerCalls: { id: string; screen: string | null; flow: string | null; applicationId: string | null; language: string; status: string;
+    endedBy?: string | null; endReason?: string | null; createdAt: string; updatedAt: string }[];
 }
 
 export type Decision = "CLEAR_REFERRAL" | "VERIFY_IDENTITY" | "REJECT";

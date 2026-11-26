@@ -19,6 +19,8 @@ spring:
       max-request-size: 8MB
 
 stm:
+  fees:
+    excise-rate: ${EXCISE_RATE:0.20}   # excise duty on bank fees; card tariffs include it, the quote shows it separately
   biometrics:                       # fingerprint comparison (SourceAFIS)
     fingerprint-dpi: ${FINGERPRINT_DPI:500}             # resolution of the kiosk scanner's images
     fingerprint-threshold: ${FINGERPRINT_THRESHOLD:40}  # similarity needed to pass (40 = about 1 false match in 10,000)

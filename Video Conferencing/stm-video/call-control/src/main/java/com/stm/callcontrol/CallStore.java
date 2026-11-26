@@ -39,6 +39,11 @@ public class CallStore {
     r.expire(callKey(id), Duration.ofDays(7));   // durable call records belong in Postgres; this is working state
   }
 
+  /** Records who ends the call and why, just before the final state change. */
+  public void setEnd(String id, String endedBy, String reason) {
+    r.opsForHash().putAll(callKey(id), Map.of("endedBy", endedBy, "endReason", reason));
+  }
+
   public Call get(String id) {
     Map<Object, Object> m = r.opsForHash().entries(callKey(id));
     return m.isEmpty() ? null : new Call(m);
@@ -73,6 +78,17 @@ public class CallStore {
     }
   }
   public void heartbeat(String id) { r.expire(tellerKey(id), TELLER_TTL); }
+  /** Tellers signed in to take calls in this language (available, busy or ringing); expired presences do not count. */
+  public int tellersOnline(String lang) {
+    Set<String> ids = r.opsForSet().members(P + "tellers");
+    if (ids == null) return 0;
+    int n = 0;
+    for (String id : ids) {
+      Object langs = r.opsForHash().get(tellerKey(id), "langs");
+      if (langs != null && (lang == null || langs.toString().contains("," + lang + ","))) n++;
+    }
+    return n;
+  }
   /** True/false from the teller's presence, null when the presence has expired. */
   public Boolean isAvailable(String id) {
     Object v = r.opsForHash().get(tellerKey(id), "available");

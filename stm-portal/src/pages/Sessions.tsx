@@ -319,7 +319,8 @@ export function SessionBody({ s, timeline, compact = false, onChange }: {
           <ul className="recs">
             {s.tellerCalls.map((c) => (
               <li key={c.id}>
-                <div><b>From screen {c.screen ?? "—"}</b><span className="muted small">{flowLabel(c.flow)} · {c.language.toUpperCase()} · {fmt.dateTime(c.createdAt)}</span></div>
+                <div><b>From screen {c.screen ?? "—"}</b><span className="muted small">{flowLabel(c.flow)} · {c.language.toUpperCase()} · {fmt.dateTime(c.createdAt)}
+                  {c.endReason && <> · {fmt.words(c.endReason)}</>}</span></div>
                 <Badge value={c.status} />
               </li>
             ))}

@@ -108,8 +108,16 @@ export interface TellerCallRequest { screen?: string; flow?: string; application
 export interface CallMedia { provider: "webrtc"; roomUrl: string; room: string; token: string }
 export interface TellerCall {
   callId: string;
-  status: "QUEUED" | "RINGING" | "CONNECTED" | "ENDED" | "CANCELLED" | "UNAVAILABLE" | (string & {});
+  /** NO_TELLER_AVAILABLE, ENDED and CANCELLED are final: stop polling, leave the room, show `message`. */
+  status: "QUEUED" | "RINGING" | "CONNECTED" | "ENDED" | "CANCELLED" | "NO_TELLER_AVAILABLE" | (string & {});
   callState?: string;
+  /** The line to show the customer for this status. */
+  message?: string; messageSw?: string;
+  /** Who ended the call and why (final statuses only). */
+  endedBy?: "CUSTOMER" | "TELLER" | "SYSTEM";
+  reason?: "TELLER_ENDED" | "CUSTOMER_HUNG_UP" | "CUSTOMER_CANCELLED" | "NO_TELLER_AVAILABLE" | "CUSTOMER_DID_NOT_RECONNECT" | "ROOM_CLOSED" | (string & {});
+  /** RINGING: how long the teller's console rings before the call goes to the next teller. */
+  ringSeconds?: number;
   estimatedWaitSec?: number;
   /** Set once a teller answers: join this LiveKit room. */
   media: CallMedia | null;
@@ -379,10 +387,33 @@ export interface CardOrderRequest {
   service: "LINK_AND_ISSUE" | "REPLACEMENT" | "NEW_CARD_SETUP";
   accountId?: string; cardProduct?: CardProduct; nameOnCard?: string; feeQuoteId?: string; customerAuthorised?: boolean;
   replacesCardId?: string; cardId?: string; applicationId?: string;
+  /** C-4b quote; send `requestId` also as the Idempotency-Key. consentAt = when the customer agreed to the fee. */
+  quoteId?: string; requestId?: string; consentAt?: string;
+  mandate?: { image: string; strokes?: number; capturedWith?: string };
+  oldCardAlreadyBlocked?: boolean; oldCardCaptured?: boolean; entitlementId?: string;
 }
+/** Amounts as strings with two decimals. */
+export interface Charged { amount: string; tax: string; total: string; currency: string }
+/** C-4b */
+export type CardJourney = "NEW" | "LOST" | "STOLEN" | "DAMAGED" | "RENEWAL" | "PIN_RESET";
+export interface CardFeeQuoteRequest {
+  customerId: string; accountId: string; journey: CardJourney; tier: CardProduct;
+  replacesCardId?: string; damageReason?: string; renewal?: boolean;
+}
+export interface CardFeeQuote {
+  quoteId: string; amount: string; tax: string; total: string; currency: string;
+  reasonCode: "FREE_ENTITLEMENT" | "NO_FEE" | null | (string & {});
+  breakdown: { label: string; amount: string }[];
+  expiresAt: string;
+}
+/** C-4c */
+export interface DebitCheck { canDebit: boolean; shortfall?: string; reason?: string }
 export interface CardOrder {
   orderId: string; cardId: string; maskedPan: string;
   fee: Money & { posted: boolean; transactionRef: string | null; waived?: boolean };
+  /** What was debited: total equals the quote's total. */
+  charged?: Charged;
+  requestId?: string;
   personalisation: { payloadForPrinter: string; jobId: string };
   reference: string;
 }
@@ -393,7 +424,7 @@ export interface CardOrderProgress {
   steps: { code: PrintStep; status: "PENDING" | "IN_PROGRESS" | "DONE" | "FAILED" }[];
 }
 /** C-7 */
-export interface DispenseRequest { outcome: "TAKEN" | "RETAINED" | "SPOILED"; qualityCheck?: "PASS" | "FAIL"; cardSerial?: string }
+export interface DispenseRequest { outcome: "TAKEN" | "RETAINED" | "SPOILED"; qualityCheck?: "PASS" | "FAIL"; cardSerial?: string; requestId?: string }
 export interface Dispensed { orderId: string; status: string; cardStatus: string }
 /** C-8: the PIN block is built by the PIN pad (EPP); never handle clear PINs in the app. */
 export interface PinSetRequest { pinBlock: string; format?: string; keySerialNumber?: string; confirmed?: boolean; policyChecks?: Record<string, boolean> }

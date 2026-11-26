@@ -147,7 +147,7 @@ public class PortalSessionsController {
         s.put("sms", rows.list("""
                 SELECT id, template, body, status, created_at FROM sms_messages WHERE session_id = :s ORDER BY created_at""", p));
         s.put("tellerCalls", rows.list("""
-                SELECT id, screen, flow, application_id, language, status, created_at, updated_at
+                SELECT id, screen, flow, application_id, language, status, ended_by, end_reason, created_at, updated_at
                 FROM teller_calls WHERE session_id = :s ORDER BY created_at""", p));
         return s;
     }

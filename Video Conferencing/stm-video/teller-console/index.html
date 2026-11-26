@@ -110,7 +110,7 @@ dt{color:var(--mute)}dd{margin:0;word-break:break-word}
 <script>window.LivekitClient || document.write('<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.23.0/dist/livekit-client.umd.js"><\/script>')</script>
 <script>
 "use strict";
-const CFG = { api: "/api", limit: 5000, ringSeconds: 22 };   // limit must match callcontrol.teller-limit
+const CFG = { api: "/api", limit: 5000, ringSeconds: 45 };   // the ring event carries the real value   // limit must match callcontrol.teller-limit
 const { Room, RoomEvent } = LivekitClient;
 const $ = id => document.getElementById(id);
 const S = window.__teller = { available: false, ctl: null, room: null, call: null, ringTimer: null };
@@ -222,7 +222,7 @@ function showRing(c) {
   S.call = { id: c.callId, txId: c.txId, terminalId: c.terminalId };
   $("ringinfo").textContent = `Terminal ${c.terminalId}, language ${c.lang}, transaction ${c.txId}`;
   $("ring").classList.add("on"); setState("Incoming call");
-  let left = CFG.ringSeconds; clearInterval(S.ringTimer);
+  let left = c.ringSeconds || CFG.ringSeconds; clearInterval(S.ringTimer);
   S.ringTimer = setInterval(() => { if (--left <= 0) hideRing(); }, 1000);
 }
 function hideRing() { clearInterval(S.ringTimer); $("ring").classList.remove("on"); if (!S.room) { S.call = null; setState("No active call"); } }
@@ -325,7 +325,8 @@ $("end").onclick = async () => {
 async function onEnded(ev) {
   if (!S.call || S.call.id !== ev.callId) return;
   try { await api("POST", `/calls/${ev.callId}/end`); } catch (e) { }   // idempotent: makes this teller available again
-  await cleanup("The call was ended by the service (" + ev.reason + "). You are available for the next call.");
+  await cleanup(ev.by === "CUSTOMER" ? "The customer hung up. You are available for the next call."
+    : "The call was ended by the service (" + ev.reason + "). You are available for the next call.");
 }
 async function cleanup(message) {
   const r = S.room; S.room = null; if (r) await r.disconnect();

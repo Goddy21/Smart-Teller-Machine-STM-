@@ -18,7 +18,13 @@ import java.util.UUID;
 @Service
 public class CallService {
   private static final Logger log = LoggerFactory.getLogger(CallService.class);
-  static final long RING_MS = 20_000, RECONNECT_MS = 60_000;
+  static final long RECONNECT_MS = 60_000;
+  /** How long a teller's console rings (callcontrol.ring-seconds, default 45 s like a phone). */
+  @org.springframework.beans.factory.annotation.Value("${callcontrol.ring-seconds:45}") long ringSeconds = 45;
+  /** Every teller busy for this long: the customer is told no teller is available. */
+  @org.springframework.beans.factory.annotation.Value("${callcontrol.max-queue-seconds:120}") long maxQueueSeconds = 120;
+  /** Nobody signed in to take calls: the customer is told after this short grace. */
+  @org.springframework.beans.factory.annotation.Value("${callcontrol.no-teller-grace-seconds:10}") long noTellerGraceSeconds = 10;
   /** A queued call whose kiosk page has had no event stream for this long is a ghost (page closed, reloaded, network lost). */
   static final long KIOSK_GRACE_MS = 10_000;
   /** Kiosks that call through the STM middleware (D-8/D-9) have no event stream here; the middleware's status polls
@@ -75,12 +81,26 @@ public class CallService {
       if (c == null || c.state != CallState.QUEUED) { store.dequeue(id); continue; }
       if (kioskGone(c)) { abandonGhost(c); continue; }   // never ring a teller for a customer who has left
       String t = store.claim(c);
-      if (t == null) continue;
+      if (t == null) { noTellerCheck(c); continue; }
       log.info("call={} QUEUED -> RINGING teller={}", id, t);
       audit.event(id, "STATE_RINGING", Map.of("from", "QUEUED", "to", "RINGING", "teller", t));
       hub.publish("kiosk", id, "state", Map.of("state", CallState.RINGING));
-      hub.publish("teller", t, "ring", Map.of("callId", id, "terminalId", c.terminalId, "lang", c.lang, "txId", c.txId));
-      store.schedule("ring", id, System.currentTimeMillis() + RING_MS);
+      hub.publish("teller", t, "ring", Map.of("callId", id, "terminalId", c.terminalId, "lang", c.lang, "txId", c.txId,
+          "ringSeconds", ringSeconds));
+      store.schedule("ring", id, System.currentTimeMillis() + ringSeconds * 1000);
+    }
+  }
+
+  /** Nobody to take the call: no teller signed in (after a short grace), or every teller busy for too long. */
+  private void noTellerCheck(Call c) {
+    long waited = System.currentTimeMillis() - c.createdAt;
+    boolean nobody = waited > noTellerGraceSeconds * 1000 && store.tellersOnline(c.lang) == 0;
+    if (!nobody && waited <= maxQueueSeconds * 1000) return;
+    store.setEnd(c.id, "SYSTEM", "NO_TELLER_AVAILABLE");
+    store.dequeue(c.id);
+    if (move(c, CallState.ABANDONED, "NONE", null)) {
+      log.info("call={} no teller available ({}), waited {} s", c.id, nobody ? "nobody signed in" : "all busy", waited / 1000);
+      audit.event(c.id, "NO_TELLER_AVAILABLE", Map.of("waitedSeconds", waited / 1000, "tellersOnline", nobody ? 0 : -1));
     }
   }
 
@@ -121,6 +141,7 @@ public class CallService {
     if (c == null || !tellerId.equals(c.tellerId)) throw new ResponseStatusException(HttpStatus.CONFLICT, "not this teller's call");
     if (c.state == CallState.CONNECTED || c.state == CallState.ON_HOLD) {
       boolean held = c.state == CallState.ON_HOLD;
+      store.setEnd(c.id, "TELLER", "TELLER_ENDED");
       if (move(c, CallState.ENDED, "NONE", null) && held) orchestrator.callAbandoned(c.txId);   // customer never came back
     } else if (c.state != CallState.ENDED) {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "call not active for this teller");
@@ -129,13 +150,31 @@ public class CallService {
     dispatch();
   }
 
-  /** Customer cancels from the kiosk while waiting or ringing. */
-  public void abandon(String callId, String terminalId) {
+  /**
+   * The customer hangs up from the kiosk, at any point: while waiting or ringing the call is cancelled; once connected
+   * (or on hold) it ends, and the teller's console closes the call by itself and goes back to available.
+   * Idempotent: hanging up a call that already ended is fine.
+   */
+  public void hangUp(String callId, String terminalId) {
     Call c = store.get(callId);
     if (c == null || !c.terminalId.equals(terminalId)) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
-    if (c.state != CallState.QUEUED && c.state != CallState.RINGING)
-      throw new ResponseStatusException(HttpStatus.CONFLICT, "call already connected");
+    if (c.state == CallState.ENDED || c.state == CallState.ABANDONED) return;
+    if (c.state == CallState.QUEUED || c.state == CallState.RINGING) { abandon(c); return; }
+    boolean held = c.state == CallState.ON_HOLD;
+    store.setEnd(c.id, "CUSTOMER", "CUSTOMER_HUNG_UP");
+    if (!move(c, CallState.ENDED, "NONE", null)) return;   // ended by someone else in the meantime
+    if (held) orchestrator.callAbandoned(c.txId);
+    if (c.tellerId != null) {
+      hub.publish("teller", c.tellerId, "ended", Map.of("callId", c.id, "reason", "customer hung up", "by", "CUSTOMER"));
+      store.setAvailable(c.tellerId, true);
+    }
+    dispatch();
+  }
+
+  /** Customer cancels from the kiosk while waiting or ringing. */
+  private void abandon(Call c) {
     String t = c.tellerId;
+    store.setEnd(c.id, "CUSTOMER", "CUSTOMER_CANCELLED");
     transition(c, CallState.ABANDONED);
     store.dequeue(c.id);
     if (t != null) { store.setAvailable(t, true); hub.publish("teller", t, "cancelled", Map.of("callId", c.id, "reason", "customer cancelled")); }
@@ -163,6 +202,7 @@ public class CallService {
         }
       }
       case "room_finished" -> {
+        if (c.state == CallState.CONNECTED || c.state == CallState.ON_HOLD) store.setEnd(c.id, "SYSTEM", "ROOM_CLOSED");
         if ((c.state == CallState.CONNECTED || c.state == CallState.ON_HOLD) && move(c, CallState.ENDED, "NONE", null) && c.tellerId != null)
           hub.publish("teller", c.tellerId, "ended", Map.of("callId", c.id, "reason", "room closed"));
       }
@@ -180,6 +220,7 @@ public class CallService {
   private void abandonGhost(Call c) {
     log.warn("call={} kiosk {} has no event stream: abandoning (page closed or network lost)", c.id, c.terminalId);
     store.dequeue(c.id);
+    store.setEnd(c.id, "SYSTEM", "KIOSK_GONE");
     if (move(c, CallState.ABANDONED, "NONE", null)) audit.event(c.id, "KIOSK_GONE", Map.of("terminal", c.terminalId, "state", c.state.name()));
   }
 
@@ -197,7 +238,8 @@ public class CallService {
         Call c = store.get(id);
         if (c == null) continue;
         if (kind.equals("ring") && c.state == CallState.RINGING) { log.warn("ring timeout call={} teller={} (now set away)", id, c.tellerId); releaseRing(c, "timeout"); }
-        else if (kind.equals("reconnect") && c.state == CallState.ON_HOLD && move(c, CallState.ENDED, "NONE", null)) {
+        else if (kind.equals("reconnect") && c.state == CallState.ON_HOLD
+            && setEnd(c, "SYSTEM", "CUSTOMER_DID_NOT_RECONNECT") && move(c, CallState.ENDED, "NONE", null)) {
           orchestrator.callAbandoned(c.txId);            // cancel and return, compensating rollback
           if (c.tellerId != null) hub.publish("teller", c.tellerId, "ended", Map.of("callId", c.id, "reason", "reconnect window expired"));
         }
@@ -248,6 +290,8 @@ public class CallService {
     String tok = tokens.join(c.room, "kiosk:" + c.terminalId, "Kiosk " + c.terminalId, true, false, Duration.ofMinutes(2));
     return Map.of("url", tokens.publicUrl, "token", tok, "room", c.room);
   }
+
+  private boolean setEnd(Call c, String by, String reason) { store.setEnd(c.id, by, reason); return true; }
 
   private Call mine(String callId, String tellerId, CallState expected) {
     Call c = store.get(callId);
