@@ -878,3 +878,8 @@ dl.kv--2 dd { margin: 0; overflow-wrap: anywhere; }
 .form label.check { flex-direction: row; align-items: center; font-weight: 600; font-size: 14px; color: var(--ink); }
 .pick label.check { gap: 10px; }
 .ledger--stack { grid-template-columns: 1fr; max-width: 1100px; }
+
+/* administrator test-data tools */
+.tt-line { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+.tt-line .menu__btn { padding: 0 8px; min-height: 24px; }
+.tt-bar { padding: 10px 14px; border: 1px dashed var(--red); border-radius: 14px; align-items: center; gap: 10px; }

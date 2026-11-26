@@ -35,7 +35,7 @@ public final class KycOptions {
             new Option("RELATIVE", "Other relative", "Jamaa mwingine"), new Option("FRIEND", "Friend", "Rafiki"));
 
     /** A code, or one of the labels as the kiosk shows them; free text from older kiosk builds is kept as written. */
-    static String sourceOfFunds(String value) {
+    public static String sourceOfFunds(String value) {
         String v = value.trim();
         if (v.isEmpty()) return null;
         for (Option o : SOURCE_OF_FUNDS) {
@@ -53,7 +53,7 @@ public final class KycOptions {
      * ("KES 50,001 - 100,000", "50001-100000", "KES_50001_100000", "50k-100k", "OVER_500000", "500000+"),
      * by reading the amounts in it. A single amount (an actual monthly income) is put in the band that contains it.
      */
-    static String monthlyIncome(String value) {
+    public static String monthlyIncome(String value) {
         String v = value.trim();
         if (v.isEmpty()) return null;
         String plain = v.replace('-', '\u2013').toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");

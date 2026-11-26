@@ -63,6 +63,7 @@ public class SecurityConfig {
                 // ---- portal, by role. TELLER and SUPERVISOR decide; SUPERVISOR and ADMIN control kiosks;
                 //      AUDITOR reads the audit trail; ADMIN manages accounts. Everyone signed in can read the rest.
                 .requestMatchers("/api/v1/portal/users/**").hasRole("ADMIN")
+                .requestMatchers("/api/v1/portal/test-data/**").hasRole("ADMIN")   // edit and delete test records
                 .requestMatchers(HttpMethod.POST, "/api/v1/portal/applications/*/decision").hasAnyRole("TELLER", "SUPERVISOR")
                 .requestMatchers(HttpMethod.POST, "/api/v1/portal/signaling/ticket").hasAnyRole("TELLER", "SUPERVISOR")
                 .requestMatchers(HttpMethod.POST, "/api/v1/portal/terminals/*/commands").hasAnyRole("SUPERVISOR", "ADMIN")

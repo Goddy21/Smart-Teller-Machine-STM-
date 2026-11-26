@@ -292,6 +292,14 @@ export interface Simulator {
   identities: { documentNumber: string; documentType: string; country: string; surname: string; givenNames: string; dateOfBirth: string; gender: string; kraPin: string | null; kraStatus: string; scenario: string; notes: string | null }[];
   paybills: { paybill: string; name: string }[];
 }
+export interface TestToolsStatus { enabled: boolean; allowed: boolean; switchedOn: boolean; builtInCustomers: string[] }
+export interface TestDeleteResult { dryRun: boolean; deleted: boolean; summary: Record<string, string | number> }
+export interface TestCustomer {
+  customerId: string; fullName: string; mobile: string; email: string | null; kraPin: string | null;
+  address: { line1?: string; town?: string; county?: string; subCounty?: string; ward?: string; poBox?: string };
+  occupation: string | null; employer: string | null; sourceOfFunds: string | null; monthlyIncome: string | null;
+  nextOfKin: { fullName?: string; relationship?: string; mobile?: string } | null;
+}
 export interface SimCustomer {
   id: string; idNumber: string; fullName: string; mobile: string; kraPin: string | null; branch: string; createdAt: string;
   customerSince: string | null; mobileChangedAt: string | null; fingersEnrolled: number; signatureSource: string | null;
@@ -385,6 +393,10 @@ export class PortalApi {
 
   private put<T>(path: string, body?: unknown) {
     return this.guard(request<T>(`${BASE}${path}`, { method: "PUT", body, headers: this.h() }));
+  }
+
+  private patch<T>(path: string, body?: unknown) {
+    return this.guard(request<T>(`${BASE}${path}`, { method: "PATCH", body, headers: this.h() }));
   }
 
   private del<T>(path: string) {
@@ -490,6 +502,23 @@ export class PortalApi {
   simPostings(accountId: string) { return this.get<Posting[]>(`/simulator/accounts/${encodeURIComponent(accountId)}/postings`); }
   simGl() { return this.get<{ gl: string; currency: string; balance: number; postings: number }[]>("/simulator/gl"); }
 
+  // ---- test-data tools (ADMIN, demo back ends only): edit and delete test records. Deletes take ?dryRun=true first.
+  testDataStatus() { return this.get<TestToolsStatus>("/test-data/status"); }
+  setTestDataTools(enabled: boolean) { return this.put<TestToolsStatus>("/test-data/status", { enabled }); }
+  testDeleteCustomer(id: string, dryRun: boolean) { return this.del<TestDeleteResult>(`/test-data/customers/${enc(id)}?dryRun=${dryRun}`); }
+  testDeleteAccount(id: string, dryRun: boolean) { return this.del<TestDeleteResult>(`/test-data/accounts/${enc(id)}?dryRun=${dryRun}`); }
+  testDeleteCards(cardIdOrAll: string, customerId: string | null, dryRun: boolean) {
+    return this.del<TestDeleteResult>(`/test-data/cards/${enc(cardIdOrAll)}?dryRun=${dryRun}${customerId ? `&customerId=${enc(customerId)}` : ""}`);
+  }
+  testDeleteSession(id: string, dryRun: boolean) { return this.del<TestDeleteResult>(`/test-data/sessions/${enc(id)}?dryRun=${dryRun}`); }
+  testAdjustBalance(accountId: string, direction: "CREDIT" | "DEBIT", amount: number, narrative?: string) {
+    return this.post<{ balanceAfter: number; currency: string; coreRef: string }>(`/test-data/accounts/${enc(accountId)}/adjust`, { direction, amount, narrative });
+  }
+  testAccountStatus(accountId: string, status: string, reason?: string) { return this.put<unknown>(`/test-data/accounts/${enc(accountId)}/status`, { status, reason }); }
+  testCardStatus(cardId: string, status: string, reason?: string) { return this.put<unknown>(`/test-data/cards/${enc(cardId)}/status`, { status, reason }); }
+  testCustomer(id: string) { return this.get<TestCustomer>(`/test-data/customers/${enc(id)}`); }
+  testEditCustomer(id: string, body: Partial<TestCustomer>) { return this.patch<TestCustomer>(`/test-data/customers/${enc(id)}`, body); }
+
   // ---- branches (list: everyone; changes: ADMIN)
   branches() { return this.get<BranchRow[]>("/branches"); }
   createBranch(code: string, d: BranchDetails) { return this.post<BranchRow>("/branches", { code, ...d }); }
@@ -526,3 +555,5 @@ export class PortalApi {
     return this.post<UserCreated>(`/users/${encodeURIComponent(username)}/reset-password`, { sendEmail });
   }
 }
+
+function enc(v: string) { return encodeURIComponent(v); }

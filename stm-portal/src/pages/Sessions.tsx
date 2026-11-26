@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { DeleteSessionButton, useTestTools } from "../admin/TestTools";
 import { usePortal } from "../context";
 import { can } from "../auth";
 import type { Application, Capture, CustomerRecord, Decision, SessionDetail, SessionRow, TimelineEntry } from "../api/portal";
@@ -115,12 +116,14 @@ export function initials(name: string | null | undefined) {
 /** Everything about one customer session. Opened from any page. */
 export function SessionDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
   const { portal } = usePortal();
+  const tools = useTestTools();
   const s = useLoad(() => (id ? portal.session(id) : Promise.resolve(null)), [id], id ? 8000 : undefined);
   const timeline = useLoad(() => (id ? portal.timeline(id) : Promise.resolve([])), [id]);
   const data = s.data && s.data.id === id ? s.data : null;
 
   return (
     <Drawer open={!!id} onClose={onClose}
+            footer={tools && data ? <DeleteSessionButton sessionId={data.id} onDeleted={onClose} /> : undefined}
             title={data ? data.customerName ?? data.applications.find((a) => a.fullName)?.fullName ?? (data.flow === "ACCOUNT_OPENING" ? "New customer" : "Customer not identified") : "Session"}
             subtitle={data && (
               <span className="badges">

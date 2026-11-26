@@ -19,6 +19,8 @@ spring:
       max-request-size: 8MB
 
 stm:
+  admin:
+    test-data-tools: ${ADMIN_TEST_TOOLS:true}   # portal edit/delete of test records (admins; never in the prod profile)
   fees:
     excise-rate: ${EXCISE_RATE:0.20}   # excise duty on bank fees; card tariffs include it, the quote shows it separately
   biometrics:                       # fingerprint comparison (SourceAFIS)

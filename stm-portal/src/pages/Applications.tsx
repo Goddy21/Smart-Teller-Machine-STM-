@@ -3,6 +3,7 @@ import { usePortal } from "../context";
 import { Badge, Card, Empty, ErrorNote, fmt, Mono, Pager, Segmented, Spinner, useDebounced, useLoad, usePaging } from "../ui/kit";
 import { IconSearch, IconShield } from "../ui/Icons";
 import { ApplicationPanel, initials } from "./Sessions";
+import { AccountMenu, CustomerMenu, useTestTools, useToolModals } from "../admin/TestTools";
 
 type Filter = "teller" | "open" | "opened" | "all";
 
@@ -54,14 +55,17 @@ export function Applications() {
           )}
         <Pager data={list.data} onPage={paging.setPage} onSize={paging.setSize} compact />
       </Card>
-      {current ? <Detail id={current} onChange={list.reload} /> : <Card><Empty title="Pick an application" /></Card>}
+      {current ? <Detail id={current} onChange={list.reload} onDeleted={() => { setSel(null); list.reload(); }} />
+        : <Card><Empty title="Pick an application" /></Card>}
     </div>
   );
 }
 
-function Detail({ id, onChange }: { id: string; onChange: () => void }) {
+function Detail({ id, onChange, onDeleted }: { id: string; onChange: () => void; onDeleted: () => void }) {
   const { portal, openSession } = usePortal();
   const app = useLoad(() => portal.application(id), [id], 6000);
+  const tools = useTestTools();
+  const tm = useToolModals(() => { app.reload(); onChange(); });
   const session = useLoad(() => (app.data ? portal.session(app.data.sessionId) : Promise.resolve(null)), [app.data?.sessionId, app.data?.updatedAt]);
   if (app.error && !app.data) return <ErrorNote error={app.error} onRetry={app.reload} />;
   if (!app.data || app.data.id !== id) return <Spinner />;
@@ -72,6 +76,17 @@ function Detail({ id, onChange }: { id: string; onChange: () => void }) {
         <span className="muted small">Kiosk <Mono>{a.terminalCode}</Mono> · started {fmt.dateTime(a.createdAt)} · expires {fmt.dateTime(a.expiresAt)}</span>
         <button type="button" className="link" onClick={() => openSession(a.sessionId)}>Open the session</button>
       </div>
+      {tools && a.customerId && (
+        <div className="toolbar toolbar--wrap tt-bar">
+          <span className="muted small">Administrator:</span>
+          <CustomerMenu label="Manage customer" customer={{ id: a.customerId, fullName: a.fullName ?? a.customerId }} open={tm.open} onChanged={onDeleted} />
+          {a.accountId && a.accountNumber && (
+            <AccountMenu label="Manage account" account={{ id: a.accountId, number: a.accountNumber }} customerId={a.customerId} open={tm.open}
+                         onChanged={() => { app.reload(); onChange(); }} />
+          )}
+          {tm.modals}
+        </div>
+      )}
       <ApplicationPanel a={a} s={session.data ?? undefined} onChange={() => { app.reload(); session.reload(); onChange(); }} />
     </div>
   );

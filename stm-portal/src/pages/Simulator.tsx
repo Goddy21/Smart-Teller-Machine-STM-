@@ -3,6 +3,7 @@ import { usePortal } from "../context";
 import { can } from "../auth";
 import { Badge, Card, ErrorNote, fmt, Mono, Pager, Spinner, useClientPage, useDebounced, useLoad } from "../ui/kit";
 import { IconAlert, IconSearch } from "../ui/Icons";
+import { AccountMenu, CardMenu, CustomerMenu, TestToolsSwitch, useTestTools, useToolModals } from "../admin/TestTools";
 
 /** The simulated core banking, registry, card system and SMS gateway used in the demo profile. */
 export function Simulator() {
@@ -17,6 +18,8 @@ export function Simulator() {
   const glPage = useClientPage(gl.data, "sim-gl", []);
   const [account, setAccount] = useState<string | null>(null);
   const edit = can.configure(user.role);
+  const tools = useTestTools();
+  const tm = useToolModals(() => { customers.reload(); gl.reload(); });
 
   if (sim.error && !sim.data) return <ErrorNote error={sim.error} onRetry={sim.reload} />;
   if (!sim.data) return <Spinner />;
@@ -52,6 +55,7 @@ export function Simulator() {
           <div className="stack stack--sm">
             <label className="switch"><input type="checkbox" checked={s.acceptAll} disabled={!edit} onChange={(e) => set({ acceptAll: e.target.checked })} />Accept everything (test mode)</label>
             <label className="switch"><input type="checkbox" checked={s.coreDown} disabled={!edit} onChange={(e) => set({ coreDown: e.target.checked })} />Core banking down</label>
+            <TestToolsSwitch />
             <label className="form">
               <span>Latency per call: <b>{s.latencyMs} ms</b></span>
               <input type="range" min={0} max={3000} step={60} value={s.latencyMs} disabled={!edit}
@@ -105,12 +109,22 @@ export function Simulator() {
         <Pager data={idPage.data} onPage={idPage.setPage} onSize={idPage.setSize} />
       </Card>
 
+      {tools && (
+        <div className="callout callout--warn">
+          <IconAlert />
+          <div><b>Administrator test-data tools</b><span>Use <b>Manage</b> and the <b>⋯</b> menus below to edit customers, add or take out
+            money, change account and card statuses, remove cards, and delete customers or accounts. Every action asks for confirmation
+            and is written to the audit journal. The four built-in test customers can be edited but not deleted. Switch them off with
+            “Administrator test-data tools” under Switches; they also disappear at go-live.</span></div>
+        </div>
+      )}
+
       <Card pad={false} title="Core banking customers"
             actions={<label className="search"><IconSearch /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, ID, CIF…" /></label>}>
         {!customers.data ? <div className="card__body"><Spinner /></div> : (
           <div className="table-wrap">
             <table className="table table--dense">
-              <thead><tr><th>Customer</th><th>Mobile</th><th>Accounts</th><th>Cards</th></tr></thead>
+              <thead><tr><th>Customer</th><th>Mobile</th><th>Accounts</th><th>Cards</th>{tools && <th />}</tr></thead>
               <tbody>
                 {custPage.rows.map((c) => (
                   <tr key={c.id}>
@@ -118,10 +132,14 @@ export function Simulator() {
                       <br />{c.fingersEnrolled ? fmt.plural(c.fingersEnrolled, "fingerprint") : "no fingerprints"} · {c.signatureSource ? "signature on file" : "no signature"}</small></td>
                     <td><Mono>{c.mobile}</Mono>{c.mobileChangedAt && <small className="muted"><br />changed {fmt.ago(c.mobileChangedAt)}</small>}</td>
                     <td>{(c.accounts ?? []).map((a) => (
-                      <div key={a.id}><button type="button" className="link" onClick={() => setAccount(a.id)}>{fmt.words(a.type)} {a.number}</button>
-                        <span className="muted small"> {fmt.money(a.available, a.currency)}</span>{a.status !== "ACTIVE" && <> <Badge value={a.status} /></>}</div>
+                      <div key={a.id} className="tt-line"><button type="button" className="link" onClick={() => setAccount(a.id)}>{fmt.words(a.type)} {a.number}</button>
+                        <span className="muted small"> {fmt.money(a.available, a.currency)}</span>{a.status !== "ACTIVE" && <> <Badge value={a.status} /></>}
+                        {tools && <AccountMenu account={{ id: a.id, number: a.number, available: a.available, currency: a.currency, status: a.status }}
+                                               customerId={c.id} open={tm.open} onChanged={() => { customers.reload(); gl.reload(); }} />}</div>
                     ))}</td>
-                    <td>{(c.cards ?? []).map((k) => <div key={k.id}><Mono>{k.maskedPan}</Mono> <Badge value={k.status} />{k.reason && k.status !== "ACTIVE" && <span className="muted small"> {fmt.words(k.reason)}</span>}</div>)}</td>
+                    <td>{(c.cards ?? []).map((k) => <div key={k.id} className="tt-line"><Mono>{k.maskedPan}</Mono> <Badge value={k.status} />{k.reason && k.status !== "ACTIVE" && <span className="muted small"> {fmt.words(k.reason)}</span>}
+                      {tools && <CardMenu card={{ id: k.id, maskedPan: k.maskedPan, status: k.status }} open={tm.open} onChanged={customers.reload} />}</div>)}</td>
+                    {tools && <td><CustomerMenu customer={{ id: c.id, fullName: c.fullName }} open={tm.open} onChanged={customers.reload} /></td>}
                   </tr>
                 ))}
               </tbody>
@@ -131,6 +149,7 @@ export function Simulator() {
         <Pager data={custPage.data} onPage={custPage.setPage} onSize={custPage.setSize} />
       </Card>
       {account && <AccountPostings id={account} onClose={() => setAccount(null)} />}
+      {tm.modals}
     </div>
   );
 }
